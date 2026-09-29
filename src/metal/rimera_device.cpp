@@ -91,7 +91,7 @@ uint32_t RM::Device::GetCurrentPresentableDescriptor() const
     return m_swapchain_descriptors.at(m_drawable->texture()->gpuResourceID()._impl);
 }
 
-void RM::Device::NewFrame(const Queue* queue)
+void RM::Device::NewFrame(Queue* queue)
 {
     m_frame_pool.reset();
     m_frame_pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());

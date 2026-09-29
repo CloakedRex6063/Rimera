@@ -1,3 +1,4 @@
+add_library(DXC::Compiler SHARED IMPORTED GLOBAL)
 if (APPLE)
     FetchContent_Declare(
             Metal
@@ -6,16 +7,12 @@ if (APPLE)
     )
     FetchContent_MakeAvailable(Metal)
 
-    add_library(DXC::Compiler SHARED IMPORTED GLOBAL)
-
     set_target_properties(DXC::Compiler PROPERTIES
             IMPORTED_LOCATION
             "${PROJECT_SOURCE_DIR}/external/dxil/libdxcompiler.dylib"
             INTERFACE_INCLUDE_DIRECTORIES
             "${PROJECT_SOURCE_DIR}/external/dxil/include"
     )
-
-    target_link_libraries(Rimera PRIVATE DXC::Compiler)
 
     add_library(MetalProxy STATIC metal_def.cpp)
     target_include_directories(MetalProxy PUBLIC ${metal_SOURCE_DIR} ${metalext_SOURCE_DIR})
@@ -40,4 +37,73 @@ if (APPLE)
             REQUIRED)
     target_include_directories(Rimera PRIVATE ${METAL_IRCONVERTER_INCLUDE_DIR})
     target_link_libraries(Rimera PRIVATE ${METAL_IRCONVERTER_LIBRARY})
+elseif (WIN32)
+    FetchContent_Declare(
+            DX-Headers
+            GIT_REPOSITORY https://github.com/microsoft/DirectX-Headers
+            GIT_TAG v1.619.5
+    )
+    FetchContent_MakeAvailable(DX-Headers)
+    target_link_libraries(Rimera PUBLIC Microsoft::DirectX-Headers)
+
+    FetchContent_Declare(
+            D3D12MA
+            GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator
+            GIT_TAG v3.1.0
+    )
+    FetchContent_MakeAvailable(D3D12MA)
+    target_link_libraries(Rimera PUBLIC D3D12MemoryAllocator)
+
+    add_library(WindowsLean INTERFACE)
+    target_include_directories(WindowsLean INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
+    target_link_libraries(Rimera PUBLIC WindowsLean)
+
+    set_target_properties(DXC::Compiler PROPERTIES
+            INTERFACE_INCLUDE_DIRECTORIES
+            "${PROJECT_SOURCE_DIR}/external/dxil/include"
+    )
+
+    set_target_properties(DXC::Compiler PROPERTIES
+            IMPORTED_IMPLIB
+            "${PROJECT_SOURCE_DIR}/external/dxil/dxcompiler.lib"
+            IMPORTED_LOCATION
+            "${PROJECT_SOURCE_DIR}/external/dxil/dxcompiler.dll"
+    )
+
+    target_link_libraries(Rimera PRIVATE d3d12 dxgi)
 endif ()
+
+function(copy_runtime_dlls target)
+    if (WIN32)
+        set(D3D12_RUNTIME_DIR "${PROJECT_SOURCE_DIR}/external/d3d12")
+        add_custom_target(copy_runtime
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:${target}>/D3D12"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:DXC::Compiler>"
+                "${D3D12_RUNTIME_DIR}/D3D12Core.dll"
+                "${D3D12_RUNTIME_DIR}/d3d12SDKLayers.dll"
+                "${D3D12_RUNTIME_DIR}/D3D12StateObjectCompiler.dll"
+                "$<TARGET_FILE_DIR:${target}>/D3D12"
+                VERBATIM
+        )
+        add_dependencies(${target} copy_runtime)
+    elseif (APPLE)
+        get_filename_component(METAL_IRCONVERTER_LIBRARY_DIR "${METAL_IRCONVERTER_LIBRARY}" DIRECTORY)
+        set_target_properties(${target} PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "@executable_path/../Frameworks;${METAL_IRCONVERTER_LIBRARY_DIR}"
+        )
+        add_custom_target(copy_dxc
+                COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_BUNDLE_DIR:${target}>/Contents/Frameworks"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:DXC::Compiler>"
+                "$<TARGET_BUNDLE_DIR:${target}>/Contents/Frameworks"
+                VERBATIM
+        )
+        add_dependencies(${target} copy_dxc)
+    endif ()
+endfunction()
+
+target_link_libraries(Rimera PRIVATE DXC::Compiler)

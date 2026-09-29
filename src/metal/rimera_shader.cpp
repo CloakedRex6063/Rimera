@@ -10,75 +10,6 @@
 
 namespace
 {
-    void CheckDxc(HRESULT result, const char* operation)
-    {
-        if (FAILED(result))
-            throw std::runtime_error(std::string(operation) + " (HRESULT " +
-                                     std::to_string(result) + ")");
-    }
-
-    CComPtr<IDxcBlob> CompileHlsl(std::string_view source, std::string_view entry_point)
-    {
-        CComPtr<IDxcUtils> utils;
-        CheckDxc(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)),
-                 "Failed to create DXC utilities");
-        CComPtr<IDxcCompiler3> compiler;
-        CheckDxc(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler)),
-                 "Failed to create HLSL compiler");
-
-        if (entry_point.size() > std::numeric_limits<UINT32>::max() ||
-            entry_point.find('\0') != std::string_view::npos)
-            throw std::invalid_argument("Invalid HLSL entry point");
-
-        CComPtr<IDxcBlobEncoding> entry_utf8;
-        CheckDxc(utils->CreateBlob(entry_point.data(),
-                                   static_cast<UINT32>(entry_point.size()),
-                                   DXC_CP_UTF8,
-                                   &entry_utf8),
-                 "Failed to copy HLSL entry point");
-        CComPtr<IDxcBlobWide> entry_wide;
-        CheckDxc(utils->GetBlobAsWide(entry_utf8, &entry_wide),
-                 "Failed to convert HLSL entry point");
-
-        const wchar_t* arguments[] = {
-            L"-E",
-            entry_wide->GetStringPointer(),
-            L"-T",
-            L"cs_6_6",
-            L"-HV",
-            L"2021",
-        };
-        const DxcBuffer buffer{source.data(), source.size(), DXC_CP_UTF8};
-        CComPtr<IDxcResult> result;
-        CheckDxc(compiler->Compile(&buffer,
-                                   arguments,
-                                   std::size(arguments),
-                                   nullptr,
-                                   IID_PPV_ARGS(&result)),
-                 "Failed to invoke HLSL compiler");
-
-        CComPtr<IDxcBlobUtf8> diagnostics;
-        CheckDxc(result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&diagnostics), nullptr),
-                 "Failed to obtain HLSL diagnostics");
-        HRESULT status = S_OK;
-        CheckDxc(result->GetStatus(&status), "Failed to obtain HLSL compilation status");
-        if (FAILED(status))
-        {
-            const std::string message =
-                diagnostics && diagnostics->GetStringLength()
-                    ? std::string(diagnostics->GetStringPointer(), diagnostics->GetStringLength())
-                    : "DXC returned no diagnostics";
-            throw std::runtime_error("HLSL compute shader compilation failed: " + message);
-        }
-
-        CComPtr<IDxcBlob> dxil;
-        CheckDxc(result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&dxil), nullptr),
-                 "Failed to obtain compiled DXIL");
-        if (!dxil || !dxil->GetBufferSize())
-            throw std::runtime_error("HLSL compiler returned empty DXIL");
-        return dxil;
-    }
-
     std::runtime_error MetalError(const char* operation, const NS::Error* error)
     {
         const auto* description = error ? error->localizedDescription() : nullptr;
@@ -103,14 +34,14 @@ void* RM::Shader::GetNativeHandle() const
 RM::Shader::Shader(Device* device, const ComputeShaderCreateInfo& info)
     : device(device), m_type(ShaderType::eCompute)
 {
-    if (!device) throw std::invalid_argument("Compute shader creation requires a Metal device");
+    if (!device) throw std::invalid_argument("Compute shader creation requires a valid device");
     if (info.code.empty()) throw std::invalid_argument("Compute shader HLSL must not be empty");
 
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
 
     const std::string entry_point(info.entry_point.empty() ? "main" : info.entry_point);
 
-    auto dxil_blob = CompileHlsl(info.code, entry_point);
+    auto dxil_blob = RM::Helpers::CompileHlsl(info.code, entry_point);
     IRCompiler* compiler = nullptr;
     IRObject* dxil = nullptr;
     IRObject* ir = nullptr;

@@ -15,8 +15,9 @@ namespace
     {
         return std::visit([](const auto& data) -> std::span<const std::byte>
                           {
-                              if constexpr (requires { data.bytes; }) return {data.bytes.data(),
-                                  data.bytes.size()};
+                              if constexpr (requires { data.bytes; })
+                                  return {data.bytes.data(),
+                                          data.bytes.size()};
                               else throw std::runtime_error("Unsupported glTF buffer source");
                           },
                           source);
@@ -103,8 +104,9 @@ namespace
         auto it = primitive.findAttribute(name);
         if (it == primitive.attributes.end()) return false;
         const auto& accessor = asset.accessors.at(it->accessorIndex);
-        if (accessor.count != count || accessor.type != type) throw std::runtime_error(
-            "Invalid glTF attribute: " + std::string(name));
+        if (accessor.count != count || accessor.type != type)
+            throw std::runtime_error(
+                "Invalid glTF attribute: " + std::string(name));
         fastgltf::iterateAccessorWithIndex<T>(asset,
                                               accessor,
                                               [&](T value, size_t i) { write(value, i); });
@@ -134,8 +136,9 @@ namespace
         {
             finite(uv);
             for (float value : uv)
-                if (std::abs(value) > 65504.f) throw std::runtime_error(
-                    "UV exceeds finite half-float range");
+                if (std::abs(value) > 65504.f)
+                    throw std::runtime_error(
+                        "UV exceeds finite half-float range");
         }
     }
 
@@ -161,8 +164,8 @@ namespace
         result.bitangent = source.tangent[3] < 0 ? 1u : 0u;
         for (unsigned i = 0; i < 2; ++i)
         {
-            uint32_t bits = uint32_t(meshopt_quantizeHalf(source.uv[i][0])) |
-                            (uint32_t(meshopt_quantizeHalf(source.uv[i][1])) << 16);
+            uint32_t bits = static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[i][0])) |
+                            (static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[i][1])) << 16);
             result.uv[i] = bits;
         }
         return result;
@@ -183,27 +186,28 @@ namespace
     void GenerateTangents(std::vector<SourceVertex>& vertices, const unsigned uv)
     {
         TangentData data{&vertices, uv};
-        SMikkTSpaceInterface interface{};
-        interface.m_getNumFaces = [](const SMikkTSpaceContext* c)
+        SMikkTSpaceInterface mikkspace{};
+        mikkspace.m_getNumFaces = [](const SMikkTSpaceContext* c)
         {
-            return int(static_cast<TangentData*>(c->m_pUserData)->vertices->size() / 3);
+            return static_cast<int>(static_cast<TangentData*>(c->m_pUserData)->vertices->size() /
+                                    3);
         };
-        interface.m_getNumVerticesOfFace = [](const SMikkTSpaceContext*, int) { return 3; };
-        interface.m_getPosition = [](const SMikkTSpaceContext* c, float* out, int f, int v)
+        mikkspace.m_getNumVerticesOfFace = [](const SMikkTSpaceContext*, int) { return 3; };
+        mikkspace.m_getPosition = [](const SMikkTSpaceContext* c, float* out, int f, int v)
         {
             std::copy_n(Corner(c, f, v).position, 3, out);
         };
-        interface.m_getNormal = [](const SMikkTSpaceContext* c, float* out, int f, int v)
+        mikkspace.m_getNormal = [](const SMikkTSpaceContext* c, float* out, int f, int v)
         {
             std::copy_n(Corner(c, f, v).normal, 3, out);
         };
-        interface.m_getTexCoord = [](const SMikkTSpaceContext* c, float* out, int f, int v)
+        mikkspace.m_getTexCoord = [](const SMikkTSpaceContext* c, float* out, int f, int v)
         {
             std::copy_n(Corner(c, f, v).uv[static_cast<TangentData*>(c->m_pUserData)->uv],
                         2,
                         out);
         };
-        interface.m_setTSpaceBasic = [](const SMikkTSpaceContext* c,
+        mikkspace.m_setTSpaceBasic = [](const SMikkTSpaceContext* c,
                                         const float* tangent,
                                         float sign,
                                         int f,
@@ -213,7 +217,7 @@ namespace
             std::copy_n(tangent, 3, vertex.tangent);
             vertex.tangent[3] = sign;
         };
-        SMikkTSpaceContext context{&interface, &data};
+        SMikkTSpaceContext context{&mikkspace, &data};
         if (!genTangSpaceDefault(&context)) throw std::runtime_error("Tangent generation failed");
     }
 
@@ -227,11 +231,13 @@ namespace
             primitive.dracoCompression)
             throw std::runtime_error("Only uncompressed static triangle primitives are supported");
         auto position = primitive.findAttribute("POSITION");
-        if (position == primitive.attributes.end()) throw std::runtime_error(
-            "Mesh has no POSITION attribute");
+        if (position == primitive.attributes.end())
+            throw std::runtime_error(
+                "Mesh has no POSITION attribute");
         size_t count = asset.accessors.at(position->accessorIndex).count;
-        if (!count || count > UINT32_MAX / sizeof(Vertex)) throw std::runtime_error(
-            "Invalid mesh vertex count");
+        if (!count || count > UINT32_MAX / sizeof(Vertex))
+            throw std::runtime_error(
+                "Invalid mesh vertex count");
         std::vector<SourceVertex> vertices(count);
         auto vec3 = [&](std::string_view name, auto member)
         {
@@ -295,15 +301,17 @@ namespace
             indices.resize(count);
             std::iota(indices.begin(), indices.end(), 0u);
         }
-        if (indices.empty() || indices.size() % 3) throw std::runtime_error(
-            "Invalid triangle index count");
+        if (indices.empty() || indices.size() % 3)
+            throw std::runtime_error(
+                "Invalid triangle index count");
         for (auto index : indices)
             if (index >= vertices.size()) throw std::runtime_error("Triangle index out of range");
 
         if (!normals || (!tangents && material.textures[2] != UINT16_MAX))
         {
-            if (indices.size() > UINT32_MAX / sizeof(Vertex)) throw std::runtime_error(
-                "Expanded mesh is too large");
+            if (indices.size() > UINT32_MAX / sizeof(Vertex))
+                throw std::runtime_error(
+                    "Expanded mesh is too large");
             std::vector<SourceVertex> corners;
             corners.reserve(indices.size());
             for (auto i : indices) corners.push_back(vertices[i]);
@@ -322,13 +330,15 @@ namespace
                                              position_at(i + 2) - position_at(i));
                     auto length = glm::length(normal);
                     normal = length > 0 ? normal / length : glm::vec3(0, 0, 1);
-                    for (size_t j = 0; j < 3; ++j) for (int k = 0; k < 3; ++k)
-                        vertices[i + j].normal[k] = normal[k];
+                    for (size_t j = 0; j < 3; ++j)
+                        for (int k = 0; k < 3; ++k)
+                            vertices[i + j].normal[k] = normal[k];
                 }
             }
-            if (!tangents && material.textures[2] != UINT16_MAX) GenerateTangents(
-                vertices,
-                (material.uv_sets >> 2) & 1);
+            if (!tangents && material.textures[2] != UINT16_MAX)
+                GenerateTangents(
+                    vertices,
+                    (material.uv_sets >> 2) & 1);
         }
         std::vector<Vertex> packed;
         packed.reserve(vertices.size());
@@ -341,7 +351,12 @@ namespace
     {
         NS::Bundle* bundle = NS::Bundle::mainBundle();
         NS::String* path = bundle->resourcePath();
-        return std::string(path->utf8String());
+        return std::string(path->utf8String()) + "/";
+    }
+#else
+    std::string ResourcePath()
+    {
+        return "";
     }
 #endif
 }
@@ -350,11 +365,12 @@ namespace
 Model::Model(RM::Device* device, const std::filesystem::path& path)
 {
     if (!device) throw std::runtime_error("Model requires a device");
-    const std::filesystem::path portable_path = ResourcePath() + "/" + path.string();
+    const std::filesystem::path portable_path = ResourcePath() + path.string();
     fastgltf::Parser parser;
     auto file = fastgltf::GltfDataBuffer::FromPath(portable_path);
-    if (file.error() != fastgltf::Error::None) throw std::runtime_error(
-        "Cannot open glTF: " + portable_path.string());
+    if (file.error() != fastgltf::Error::None)
+        throw std::runtime_error(
+            "Cannot open glTF: " + portable_path.string());
     auto parsed = parser.loadGltf(file.get(),
                                   portable_path.parent_path(),
                                   fastgltf::Options::LoadExternalBuffers |
@@ -366,14 +382,15 @@ Model::Model(RM::Device* device, const std::filesystem::path& path)
     if (auto error = fastgltf::validate(asset); error != fastgltf::Error::None)
         throw std::runtime_error(
             "glTF validation failed: " + std::string(fastgltf::getErrorMessage(error)));
-    if (!asset.extensionsRequired.empty()) throw std::runtime_error(
-        "Required glTF extensions are not supported");
+    if (!asset.extensionsRequired.empty())
+        throw std::runtime_error(
+            "Required glTF extensions are not supported");
     if (!asset.skins.empty()) throw std::runtime_error("Skinned models are not supported");
     CheckData(asset);
     std::unordered_map<size_t, uint16_t> texture_map;
     auto load_texture = [&](size_t index, bool srgb) -> uint16_t
     {
-        const auto key = index * 2 + size_t(srgb);
+        const auto key = index * 2 + static_cast<size_t>(srgb);
         if (auto found = texture_map.find(key); found != texture_map.end()) return found->second;
         if (m_textures.size() >= UINT16_MAX) throw std::runtime_error("Too many model textures");
         const auto& source = asset.textures.at(index);
@@ -397,9 +414,10 @@ Model::Model(RM::Device* device, const std::filesystem::path& path)
                        using T = std::decay_t<decltype(data)>;
                        if constexpr (std::is_same_v<T, fastgltf::sources::URI>)
                        {
-                           if (!data.uri.isLocalPath() || data.fileByteOffset) throw
-                               std::runtime_error(
-                                   "Unsupported image URI");
+                           if (!data.uri.isLocalPath() || data.fileByteOffset)
+                               throw
+                                   std::runtime_error(
+                                       "Unsupported image URI");
                            m_textures.emplace_back(device,
                                                    portable_path.parent_path() / data.uri.fspath(),
                                                    srgb,
@@ -443,10 +461,11 @@ Model::Model(RM::Device* device, const std::filesystem::path& path)
         auto slot = [&](const auto& info, unsigned slot_index, bool srgb)
         {
             if (!info) return;
-            if (info->texCoordIndex > 1 || info->transform) throw std::runtime_error(
-                "Unsupported texture coordinates or transform");
+            if (info->texCoordIndex > 1 || info->transform)
+                throw std::runtime_error(
+                    "Unsupported texture coordinates or transform");
             material.textures[slot_index] = load_texture(info->textureIndex, srgb);
-            material.uv_sets |= uint32_t(info->texCoordIndex) << slot_index;
+            material.uv_sets |= static_cast<uint32_t>(info->texCoordIndex) << slot_index;
         };
         slot(source.pbrData.baseColorTexture, 0, true);
         slot(source.pbrData.metallicRoughnessTexture, 1, false);
@@ -454,8 +473,9 @@ Model::Model(RM::Device* device, const std::filesystem::path& path)
         slot(source.occlusionTexture, 3, false);
         slot(source.emissiveTexture, 4, true);
         if (source.normalTexture) material.normal_scale = source.normalTexture->scale;
-        if (source.occlusionTexture) material.occlusion_strength = source.occlusionTexture->
-                                     strength;
+        if (source.occlusionTexture)
+            material.occlusion_strength = source.occlusionTexture->
+                                                 strength;
         m_materials.push_back(material);
     }
     const auto default_material = static_cast<uint32_t>(m_materials.size());
@@ -481,25 +501,30 @@ Model::Model(RM::Device* device, const std::filesystem::path& path)
     {
         const auto& source = asset.nodes[i];
         auto& node = m_nodes[i];
-        if (source.skinIndex || !source.weights.empty()) throw std::runtime_error(
-            "Deformable nodes are not supported");
+        if (source.skinIndex || !source.weights.empty())
+            throw std::runtime_error(
+                "Deformable nodes are not supported");
         node.name = source.name;
         auto matrix = fastgltf::getTransformMatrix(source);
-        for (int c = 0; c < 4; ++c) for (int r = 0; r < 4; ++r)
-            node.local_transform[c][r] = matrix[c][r];
+        for (int c = 0; c < 4; ++c)
+            for (int r = 0; r < 4; ++r)
+                node.local_transform[c][r] = matrix[c][r];
         if (source.meshIndex) node.meshes = mesh_map.at(*source.meshIndex);
         for (auto child : source.children)
         {
             auto& child_node = m_nodes.at(child);
-            if (child_node.parent != UINT32_MAX) throw std::runtime_error(
-                "Node has multiple parents");
+            if (child_node.parent != UINT32_MAX)
+                throw std::runtime_error(
+                    "Node has multiple parents");
             child_node.parent = static_cast<uint32_t>(i);
             node.children.push_back(static_cast<uint32_t>(child));
         }
     }
     std::vector<uint32_t> pending;
-    for (size_t i = 0; i < m_nodes.size(); ++i) if (m_nodes[i].parent == UINT32_MAX) pending.
-        push_back(static_cast<uint32_t>(i));
+    for (size_t i = 0; i < m_nodes.size(); ++i)
+        if (m_nodes[i].parent == UINT32_MAX)
+            pending.
+                push_back(static_cast<uint32_t>(i));
     auto all_roots = pending;
     size_t visited = 0;
     while (!pending.empty())
@@ -519,8 +544,9 @@ Model::Model(RM::Device* device, const std::filesystem::path& path)
         const auto& scene = asset.scenes.at(asset.defaultScene.value_or(0));
         for (auto root : scene.nodeIndices)
         {
-            if (m_nodes.at(root).parent != UINT32_MAX) throw std::runtime_error(
-                "Scene root has a parent");
+            if (m_nodes.at(root).parent != UINT32_MAX)
+                throw std::runtime_error(
+                    "Scene root has a parent");
             m_scene_roots.push_back(static_cast<uint32_t>(root));
         }
     }

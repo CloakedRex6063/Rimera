@@ -1,6 +1,6 @@
 #include "rimera_texture.hpp"
 #include "rimera_metal.hpp"
-#include <stdexcept>
+#include "stdexcept"
 
 RM::Texture::Texture(Device* device, const TextureCreateInfo& info) : m_device(device)
 {

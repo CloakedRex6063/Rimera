@@ -5,11 +5,12 @@
 
 namespace RM
 {
-    ResidencySet::ResidencySet(const NS::SharedPtr<MTL::Device>& device)
+    ResidencySet::ResidencySet(Device* device) : m_device(device)
     {
+        auto* native_device = static_cast<MTL::Device*>(m_device->GetNativeHandle());
         auto* descriptor = MTL::ResidencySetDescriptor::alloc()->init();
         NS::Error* error;
-        m_residency_set = NS::TransferPtr(device->newResidencySet(descriptor, &error));
+        m_residency_set = NS::TransferPtr(native_device->newResidencySet(descriptor, &error));
         descriptor->release();
     }
 

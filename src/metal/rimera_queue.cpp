@@ -12,6 +12,7 @@ void* RM::Fence::GetNativeHandle() const { return m_event.get(); }
 RM::Queue::Queue(const NS::SharedPtr<MTL::Device>& device) : m_device(device)
 {
     m_queue = NS::TransferPtr(m_device->newMTL4CommandQueue());
+    m_event.reset();
 }
 
 RM::Queue::~Queue() { WaitIdle(); }
@@ -25,17 +26,12 @@ void RM::Queue::RemoveResidencySet(const ResidencySet* residency_set) const
     m_queue->removeResidencySet(static_cast<MTL::ResidencySet*>(residency_set->GetNative()));
 }
 
-void RM::Queue::WaitIdle() const
+void RM::Queue::WaitIdle() 
 {
     const auto event = NS::TransferPtr(m_device->newSharedEvent());
 
     m_queue->signalEvent(event.get(), 1);
     event->waitUntilSignaledValue(1, 1000);
-}
-
-void RM::Queue::Wait(void* presentable) const
-{
-    m_queue->wait(static_cast<MTL::Drawable*>(presentable));
 }
 
 void RM::Queue::Wait(const Fence* fence, const uint32_t value) const
@@ -55,9 +51,9 @@ void RM::Queue::Submit(const Command* command) const
     m_queue->commit(buffers, 1);
 }
 
-void RM::Queue::Present(void* presentable) const
+void RM::Queue::Present() const
 {
-    auto* drawable = static_cast<MTL::Drawable*>(presentable);
+    auto* drawable = static_cast<MTL::Drawable*>(m_device->GetCurrentPresentable());
     m_queue->signalDrawable(drawable);
     drawable->present();
 }

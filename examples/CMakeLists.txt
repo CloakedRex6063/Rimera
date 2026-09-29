@@ -28,18 +28,10 @@ function(create_example name)
                 MACOSX_BUNDLE_BUNDLE_VERSION "1"
                 MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         )
-        get_filename_component(METAL_IRCONVERTER_LIBRARY_DIR "${METAL_IRCONVERTER_LIBRARY}" DIRECTORY)
-        set_target_properties(${name} PROPERTIES
-                BUILD_WITH_INSTALL_RPATH TRUE
-                INSTALL_RPATH "@executable_path;${METAL_IRCONVERTER_LIBRARY_DIR}")
-        add_custom_command(TARGET ${name} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:DXC::Compiler>"
-                "$<TARGET_FILE_DIR:${name}>"
-                VERBATIM)
     else ()
         add_executable(${name})
     endif ()
+    copy_runtime_dlls(${name})
     target_link_libraries(${name} PUBLIC Rimera Utility)
     copy_assets(${name})
 endfunction()

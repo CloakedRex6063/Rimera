@@ -18,6 +18,7 @@ Texture::Texture(RM::Device* device, std::span<const std::byte> encoded, bool sr
     auto* pixels = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(encoded.data()), static_cast<int>(encoded.size()), &width, &height, &channels, 4);
     Initialize(device, pixels, width, height, srgb);
 }
+
 void Texture::Initialize(RM::Device* device, unsigned char* pixels, int width, int height, bool srgb)
 {
     std::unique_ptr<unsigned char, decltype(&stbi_image_free)> owned(pixels, stbi_image_free);
