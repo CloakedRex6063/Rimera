@@ -10,6 +10,7 @@ namespace RM
     public:
         ~Sampler();
         [[nodiscard]] uint32_t GetSamplerIndex() const { return m_index; }
+        [[nodiscard]] void* GetNativeHandle() const;
 
     private:
         Sampler(Device* device, const SamplerCreateInfo& info);
@@ -19,6 +20,8 @@ namespace RM
 #ifdef RIMERA_WINDOWS
         D3D12_CPU_DESCRIPTOR_HANDLE m_cpu_handle;
         D3D12_GPU_DESCRIPTOR_HANDLE m_gpu_handle;
+#elifdef RIMERA_MAC
+        NS::SharedPtr<MTL::SamplerState> m_sampler;
 #endif
         uint32_t m_index;
     };

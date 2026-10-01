@@ -1,6 +1,7 @@
 #include "rimera_residency.hpp"
 
 #include "rimera_buffer.hpp"
+#include "rimera_device.hpp"
 #include "rimera_texture.hpp"
 
 namespace RM
@@ -16,22 +17,29 @@ namespace RM
 
     ResidencySet::~ResidencySet() { m_residency_set->removeAllAllocations(); }
 
-    void ResidencySet::AddAllocation(const Texture* resource)
+    void ResidencySet::AddAllocation(Texture* resource)
     {
         m_residency_set->addAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
     }
+
     void ResidencySet::RemoveAllocation(const Texture* resource)
     {
         m_residency_set->removeAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
     }
 
-    void ResidencySet::AddAllocation(const Buffer* resource)
+    void ResidencySet::AddAllocation(Buffer* resource)
     {
         m_residency_set->addAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
     }
+
     void ResidencySet::RemoveAllocation(const Buffer* resource)
     {
         m_residency_set->removeAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
+    }
+
+    void ResidencySet::RemoveAllAllocations()
+    {
+        m_residency_set->removeAllAllocations();
     }
 
     void ResidencySet::AddAllocation(const MTL::Resource* resource) const
@@ -51,4 +59,4 @@ namespace RM
     void ResidencySet::EndResidency() const { m_residency_set->endResidency(); }
 
     void* ResidencySet::GetNative() const { return m_residency_set.get(); }
-}  // namespace RM
+} // namespace RM

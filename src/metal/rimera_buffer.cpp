@@ -2,9 +2,16 @@
 #include "rimera_device.hpp"
 #include "stdexcept"
 
-void* RM::Buffer::GetNativeHandle() const { return m_buffer.get(); }
+void* RM::Buffer::GetNativeHandle() const noexcept { return m_buffer.get(); }
 
-void* RM::Buffer::GetContents() const { return m_buffer->contents(); }
+void* RM::Buffer::Map()
+{
+    return m_buffer->contents();
+}
+
+void RM::Buffer::Unmap()
+{
+}
 
 uint64_t RM::Buffer::GetGPUAddress() const { return m_buffer->gpuAddress(); }
 
@@ -26,4 +33,4 @@ RM::Buffer::Buffer(Device* device, const BufferCreateInfo& info) : m_device(devi
     m_resource_index = m_device->AddDescriptor(this);
 }
 
-RM::Buffer::~Buffer() { m_device->RemoveDescriptor(m_resource_index); }
+RM::Buffer::~Buffer() { m_device->RemoveDescriptor(this); }

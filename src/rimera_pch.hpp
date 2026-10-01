@@ -6,6 +6,12 @@
 #include "QuartzCore/QuartzCore.hpp"
 #include "Foundation/Foundation.hpp"
 #include "TargetConditionals.h"
+#ifdef __OBJC__
+#include "Metal/Metal.h"
+#include "QuartzCore/QuartzCore.h"
+#include "Foundation/Foundation.h"
+#include "AppKit/AppKit.h"
+#endif
 #elifdef RIMERA_WINDOWS
 #include "lean_windows.hpp"
 #include "wrl/client.h"
@@ -27,4 +33,3 @@ namespace fs = std::filesystem;
 #include "fstream"
 #include "ranges"
 #include "algorithm"
-

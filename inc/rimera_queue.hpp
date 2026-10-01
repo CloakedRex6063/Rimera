@@ -14,11 +14,10 @@ namespace RM
     private:
         friend class Device;
         Device* m_device;
+        Fence(Device* device);
 #ifdef RIMERA_MAC
-        Fence(const NS::SharedPtr<MTL::Device>& device);
         NS::SharedPtr<MTL::SharedEvent> m_event;
 #elifdef RIMERA_WINDOWS
-        Fence(Device* device);
         ComPtr<ID3D12Fence> m_fence;
 #endif
     };

@@ -17,7 +17,7 @@ RM::UInt2 RM::Texture::GetDimensions() const noexcept
     return UInt2{.x = static_cast<uint32_t>(desc.Width), .y = desc.Height};
 }
 
-uint32_t RM::Texture::GetMipLevels() const
+uint32_t RM::Texture::GetMipLevels() const noexcept
 {
     return m_texture->GetDesc().MipLevels;
 }

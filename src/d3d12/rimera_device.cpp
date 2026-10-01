@@ -344,7 +344,7 @@ uint32_t RM::Device::AddDescriptor(TextureViewType view_type)
     return index;
 }
 
-void RM::Device::AddDescriptor(Sampler* sampler)
+uint32_t RM::Device::AddDescriptor(Sampler* sampler)
 {
     uint32_t index;
     if (!m_sampler_heap.free_descriptors.empty())
@@ -358,7 +358,7 @@ void RM::Device::AddDescriptor(Sampler* sampler)
     }
     sampler->m_cpu_handle.ptr = m_sampler_heap.cpu_base.ptr + index * m_sampler_heap.stride;
     sampler->m_gpu_handle.ptr = m_sampler_heap.gpu_base.ptr + index * m_sampler_heap.stride;
-    sampler->m_index = index;
+    return index;
 }
 
 void RM::Device::RemoveDescriptor(const Buffer* buffer)
@@ -395,7 +395,7 @@ void* RM::Device::GetNativeRootSignature() const
     return m_root_sig.Get();
 }
 
-RM::TextureView* RM::Device::GetCurrentBackBuffer() const
+RM::TextureView* RM::Device::GetCurrentBackBuffer()
 {
     return m_frame_datas[m_swapchain->GetCurrentBackBufferIndex()].swapchain_rtv;
 }

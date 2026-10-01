@@ -6,6 +6,11 @@ RM::TextureView::~TextureView()
 {
 }
 
+RM::Texture* RM::TextureView::GetTexture() const noexcept
+{
+    return m_info.texture;
+}
+
 RM::TextureView::TextureView(Device* device, const TextureViewCreateInfo& info) : m_device(device),
     m_info(info)
 {

@@ -48,12 +48,13 @@ int main()
 
         command->Begin();
 
-        auto rt_barrier = RM::TextureBarrierBuilder(
-                              texture,
-                              texture_layout,
-                              RM::BarrierLayout::RenderTarget)
-                          .Before(RM::BarrierStage::None, RM::BarrierAccess::NoAccess)
-                          .After(RM::BarrierStage::RenderTarget, RM::BarrierAccess::RenderTarget)
+        auto rt_barrier = RM::TextureBarrierBuilder(texture)
+                          .BeforeLayout(texture_layout)
+                          .AfterLayout(RM::BarrierLayout::RenderTarget)
+                          .BeforeStage(RM::BarrierStage::None)
+                          .BeforeAccess(RM::BarrierAccess::NoAccess)
+                          .AfterStage(RM::BarrierStage::RenderTarget)
+                          .AfterAccess(RM::BarrierAccess::RenderTarget)
                           .Build();
 
         command->Barrier(rt_barrier);
@@ -69,32 +70,34 @@ int main()
         command->BeginRenderPass(rpci);
         command->EndRenderPass();
 
-        auto copy_src = RM::TextureBarrierBuilder(
-                            texture,
-                            RM::BarrierLayout::RenderTarget,
-                            RM::BarrierLayout::ShaderResource)
-                        .Before(RM::BarrierStage::RenderTarget, RM::BarrierAccess::RenderTarget)
-                        .After(RM::BarrierStage::PixelShading, RM::BarrierAccess::ShaderResource)
+        auto copy_src = RM::TextureBarrierBuilder(texture)
+                        .BeforeLayout(RM::BarrierLayout::RenderTarget)
+                        .AfterLayout(RM::BarrierLayout::ShaderResource)
+                        .BeforeStage(RM::BarrierStage::RenderTarget)
+                        .AfterStage(RM::BarrierStage::PixelShading)
+                        .BeforeAccess(RM::BarrierAccess::RenderTarget)
+                        .AfterAccess(RM::BarrierAccess::ShaderResource)
                         .Build();
 
-        auto copy_dst = RM::TextureBarrierBuilder(
-                            backbuffer->GetTexture(),
-                            RM::BarrierLayout::Present,
-                            RM::BarrierLayout::RenderTarget)
-                        .Before(RM::BarrierStage::None, RM::BarrierAccess::NoAccess)
-                        .After(RM::BarrierStage::RenderTarget, RM::BarrierAccess::RenderTarget)
+        auto copy_dst = RM::TextureBarrierBuilder(backbuffer->GetTexture())
+                        .BeforeLayout(RM::BarrierLayout::Present)
+                        .AfterLayout(RM::BarrierLayout::RenderTarget)
+                        .BeforeStage(RM::BarrierStage::None)
+                        .AfterStage(RM::BarrierStage::RenderTarget)
+                        .BeforeAccess(RM::BarrierAccess::NoAccess)
+                        .AfterAccess(RM::BarrierAccess::RenderTarget)
                         .Build();
 
         command->Barrier(std::array{copy_src, copy_dst});
         command->Blit(srv, backbuffer, RM::BlitRegion());
 
-        auto present_barrier = RM::TextureBarrierBuilder(
-                                   backbuffer->GetTexture(),
-                                   RM::BarrierLayout::RenderTarget,
-                                   RM::BarrierLayout::Present)
-                               .Before(RM::BarrierStage::RenderTarget,
-                                       RM::BarrierAccess::RenderTarget)
-                               .After(RM::BarrierStage::None, RM::BarrierAccess::NoAccess)
+        auto present_barrier = RM::TextureBarrierBuilder(backbuffer->GetTexture())
+                               .BeforeLayout(RM::BarrierLayout::RenderTarget)
+                               .AfterLayout(RM::BarrierLayout::Present)
+                               .BeforeStage(RM::BarrierStage::RenderTarget)
+                               .BeforeAccess(RM::BarrierAccess::RenderTarget)
+                               .AfterStage(RM::BarrierStage::None)
+                               .AfterAccess(RM::BarrierAccess::NoAccess)
                                .Build();
 
         command->Barrier(present_barrier);
@@ -110,6 +113,7 @@ int main()
     device->GetGraphicsQueue()->WaitIdle();
     delete model;
     device->DestroyTextureView(rt_tex_view);
+    device->DestroyTextureView(srv);
     device->DestroyTexture(texture);
     device->DestroyCommandRing(command_ring);
     RM::DestroyDevice(device);

@@ -7,16 +7,26 @@ namespace RM
     class BarrierBuilderBase
     {
     public:
-        Derived& Before(BarrierStage stage, BarrierAccess access)
+        Derived& BeforeStage(BarrierStage stage)
         {
             m_value.scope.sync_before = stage;
+            return static_cast<Derived&>(*this);
+        }
+
+        Derived& BeforeAccess(BarrierAccess access)
+        {
             m_value.scope.access_before = access;
             return static_cast<Derived&>(*this);
         }
 
-        Derived& After(BarrierStage stage, BarrierAccess access)
+        Derived& AfterStage(BarrierStage stage)
         {
             m_value.scope.sync_after = stage;
+            return static_cast<Derived&>(*this);
+        }
+
+        Derived& AfterAccess(BarrierAccess access)
+        {
             m_value.scope.access_after = access;
             return static_cast<Derived&>(*this);
         }
@@ -71,17 +81,26 @@ namespace RM
         : public BarrierBuilderBase<TextureBarrierBuilder, TextureBarrier>
     {
     public:
-        TextureBarrierBuilder(
-            Texture* texture,
-            BarrierLayout before,
-            BarrierLayout after)
+        explicit TextureBarrierBuilder(Texture* texture)
         {
             m_value.texture = texture;
-            m_value.layout_before = before;
-            m_value.layout_after = after;
+            m_value.layout_before = BarrierLayout::Common;
+            m_value.layout_after = BarrierLayout::Common;
 
             m_value.subresource = {.first_mip = 0, .num_mips = 1, .first_array_layer = 0,
                                    .num_array_layers = 1};
+        }
+
+        TextureBarrierBuilder& BeforeLayout(BarrierLayout layout)
+        {
+            m_value.layout_before = layout;
+            return *this;
+        }
+
+        TextureBarrierBuilder& AfterLayout(BarrierLayout layout)
+        {
+            m_value.layout_after = layout;
+            return *this;
         }
 
         TextureBarrierBuilder& Mips(uint32_t first, uint32_t count)
@@ -317,7 +336,6 @@ namespace RM
 
             m_value.rasterizer_state = RasterizerState{};
             m_value.rasterizer_state.depth_clip_enable = true;
-            m_value.rasterizer_state.sample_count = 1;
 
             auto& depth = m_value.depth_stencil_state;
             depth.depth_enable = false;
@@ -453,28 +471,9 @@ namespace RM
             return *this;
         }
 
-        GraphicsPipelineBuilder& SampleCount(uint32_t count)
-        {
-            assert(count > 0);
-            m_value.rasterizer_state.sample_count = count;
-            return *this;
-        }
-
         GraphicsPipelineBuilder& Multisample(bool enabled = true)
         {
             m_value.rasterizer_state.multisample_enable = enabled;
-            return *this;
-        }
-
-        GraphicsPipelineBuilder& AntialiasedLines(bool enabled = true)
-        {
-            m_value.rasterizer_state.antialiased_line_enable = enabled;
-            return *this;
-        }
-
-        GraphicsPipelineBuilder& ConservativeRaster(bool enabled = true)
-        {
-            m_value.rasterizer_state.conservative_raster = enabled;
             return *this;
         }
 

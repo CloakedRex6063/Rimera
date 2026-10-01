@@ -4,6 +4,7 @@ namespace RM
 {
     class Buffer;
     class Texture;
+    class Device;
 
     class ResidencySet
     {
@@ -14,6 +15,7 @@ namespace RM
         void RemoveAllocation(const Texture* resource);
         void AddAllocation(Buffer* resource);
         void RemoveAllocation(const Buffer* resource);
+
         void RemoveAllAllocations();
         void Commit() const;
 

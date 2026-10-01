@@ -1,4 +1,5 @@
 #include "rimera_command.hpp"
+#include "rimera_buffer.hpp"
 #include "rimera_d3d12.hpp"
 #include "rimera_device.hpp"
 #include "assert.h"
@@ -13,8 +14,9 @@ RM::Command::~Command()
     m_device->DestroyPipeline(m_blit_shader);
 }
 
-void RM::Command::Begin() const
+void RM::Command::Begin()
 {
+    m_index_buffer = {};
     m_command_allocator->Reset();
 
     m_command_buffer->Reset(m_command_allocator.Get(), nullptr);
@@ -34,7 +36,7 @@ void RM::Command::End() const
     m_command_buffer->Close();
 }
 
-void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info) const
+void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info) 
 {
     auto heap = m_device->m_rtv_heap;
     std::array<D3D12_RENDER_PASS_RENDER_TARGET_DESC, 8> render_target_descriptors;
@@ -103,11 +105,38 @@ void RM::Command::DrawIndexed(const uint32_t index_count,
                               const uint32_t start_vertex,
                               const uint32_t start_instance) const
 {
+    if (!m_index_buffer.index_size)
+        throw std::runtime_error("BindIndexBuffer is required before drawing indexed primitives");
+
+    const uint64_t offset = uint64_t{start_index} * m_index_buffer.index_size;
+    const uint64_t size = uint64_t{index_count} * m_index_buffer.index_size;
+    if (offset > m_index_buffer.length || size > m_index_buffer.length - offset)
+        throw std::out_of_range("Indexed draw exceeds the bound index buffer");
+
     m_command_buffer->DrawIndexedInstanced(index_count,
                                            instance_count,
                                            start_index,
                                            start_vertex,
                                            start_instance);
+}
+
+void RM::Command::BindIndexBuffer(const Buffer* buffer, Format format)
+{
+    if (!buffer) throw std::invalid_argument("Cannot bind a null index buffer");
+    if (format != Format::R16_UInt && format != Format::R32_UInt)
+        throw std::invalid_argument("Index buffers require R16_UInt or R32_UInt format");
+
+    const D3D12_INDEX_BUFFER_VIEW view{
+        .BufferLocation = buffer->GetGPUAddress(),
+        .SizeInBytes = buffer->GetLength(),
+        .Format = format == Format::R16_UInt ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT,
+    };
+    m_command_buffer->IASetIndexBuffer(&view);
+    m_index_buffer = {
+        .address = view.BufferLocation,
+        .length = view.SizeInBytes,
+        .index_size = format == Format::R16_UInt ? 2u : 4u,
+    };
 }
 
 void RM::Command::DispatchMesh(const DispatchGroup dispatch_group) const
@@ -120,7 +149,7 @@ void RM::Command::Dispatch(const DispatchGroup dispatch_group) const
     m_command_buffer->Dispatch(dispatch_group.x, dispatch_group.y, dispatch_group.z);
 }
 
-void RM::Command::BindShader(const Pipeline* shader) const
+void RM::Command::BindShader(const Pipeline* shader)
 {
     auto* pipeline = static_cast<ID3D12PipelineState*>(shader->GetNativeHandle());
     m_command_buffer->SetPipelineState(pipeline);
@@ -131,121 +160,94 @@ void RM::Command::BindConstantBuffer(uint32_t slot, const Buffer* buffer) const
     m_command_buffer->SetGraphicsRootConstantBufferView(slot, buffer->GetGPUAddress());
 }
 
-void RM::Command::Barrier(const std::span<const BarrierGroup>& groups) const
+void RM::Command::Barrier(const BarrierGroup& group)
 {
-    size_t global_count = 0;
-    size_t texture_count = 0;
-    size_t buffer_count = 0;
-
-    for (const auto& group : groups)
-    {
-        global_count += group.global_barriers.size();
-        texture_count += group.texture_barriers.size();
-        buffer_count += group.buffer_barriers.size();
-    }
-
     std::vector<D3D12_GLOBAL_BARRIER> globals;
     std::vector<D3D12_TEXTURE_BARRIER> textures;
     std::vector<D3D12_BUFFER_BARRIER> buffers;
     std::vector<D3D12_BARRIER_GROUP> native_groups;
 
-    globals.reserve(global_count);
-    textures.reserve(texture_count);
-    buffers.reserve(buffer_count);
-    native_groups.reserve(groups.size() * 3);
+    globals.reserve(group.global_barriers.size());
+    textures.reserve(group.texture_barriers.size());
+    buffers.reserve(group.buffer_barriers.size());
+    native_groups.reserve(3);
 
-    for (const auto& group : groups)
+    if (!group.global_barriers.empty())
     {
-        if (!group.global_barriers.empty())
-        {
-            const size_t start = globals.size();
+        for (const auto& barrier : group.global_barriers)
+            globals.push_back(D3D12::ConvertBarrier(barrier));
 
-            for (const auto& barrier : group.global_barriers)
-            {
-                globals.push_back(D3D12::ConvertBarrier(barrier));
-            }
+        D3D12_BARRIER_GROUP native{};
+        native.Type = D3D12_BARRIER_TYPE_GLOBAL;
+        native.NumBarriers = static_cast<UINT>(globals.size());
+        native.pGlobalBarriers = globals.data();
+        native_groups.push_back(native);
+    }
 
-            D3D12_BARRIER_GROUP native{};
-            native.Type = D3D12_BARRIER_TYPE_GLOBAL;
-            native.NumBarriers = group.global_barriers.size();
-            native.pGlobalBarriers = globals.data() + start;
-            native_groups.push_back(native);
-        }
+    if (!group.texture_barriers.empty())
+    {
+        for (const auto& barrier : group.texture_barriers)
+            textures.push_back(D3D12::ConvertBarrier(barrier));
 
-        if (!group.texture_barriers.empty())
-        {
-            const size_t start = textures.size();
+        D3D12_BARRIER_GROUP native{};
+        native.Type = D3D12_BARRIER_TYPE_TEXTURE;
+        native.NumBarriers = static_cast<UINT>(textures.size());
+        native.pTextureBarriers = textures.data();
+        native_groups.push_back(native);
+    }
 
-            for (const auto& barrier : group.texture_barriers)
-                textures.push_back(D3D12::ConvertBarrier(barrier));
+    if (!group.buffer_barriers.empty())
+    {
+        for (const auto& barrier : group.buffer_barriers)
+            buffers.push_back(D3D12::ConvertBarrier(barrier));
 
-            D3D12_BARRIER_GROUP native{};
-            native.Type = D3D12_BARRIER_TYPE_TEXTURE;
-            native.NumBarriers = group.texture_barriers.size();
-            native.pTextureBarriers = textures.data() + start;
-            native_groups.push_back(native);
-        }
-
-        if (!group.buffer_barriers.empty())
-        {
-            const size_t start = buffers.size();
-
-            for (const auto& barrier : group.buffer_barriers)
-                buffers.push_back(D3D12::ConvertBarrier(barrier));
-
-            D3D12_BARRIER_GROUP native{};
-            native.Type = D3D12_BARRIER_TYPE_BUFFER;
-            native.NumBarriers = group.buffer_barriers.size();
-            native.pBufferBarriers = buffers.data() + start;
-            native_groups.push_back(native);
-        }
+        D3D12_BARRIER_GROUP native{};
+        native.Type = D3D12_BARRIER_TYPE_BUFFER;
+        native.NumBarriers = static_cast<UINT>(buffers.size());
+        native.pBufferBarriers = buffers.data();
+        native_groups.push_back(native);
     }
 
     if (!native_groups.empty())
     {
         m_command_buffer->Barrier(
-            native_groups.size(),
+            static_cast<UINT>(native_groups.size()),
             native_groups.data());
     }
 }
 
-void RM::Command::Barrier(const BarrierGroup& group) const
-{
-    Barrier(std::span{&group, 1});
-}
-
-void RM::Command::Barrier(const std::span<const TextureBarrier> barriers) const
+void RM::Command::Barrier(const std::span<const TextureBarrier> barriers)
 {
     BarrierGroup group;
     group.texture_barriers = barriers;
     Barrier(std::span{&group, 1});
 }
 
-void RM::Command::Barrier(const TextureBarrier& barrier) const
+void RM::Command::Barrier(const TextureBarrier& barrier)
 {
     Barrier(std::span{&barrier, 1});
 }
 
-void RM::Command::Barrier(const std::span<const BufferBarrier> barriers) const
+void RM::Command::Barrier(const std::span<const BufferBarrier> barriers)
 {
     BarrierGroup group;
     group.buffer_barriers = barriers;
     Barrier(std::span{&group, 1});
 }
 
-void RM::Command::Barrier(const BufferBarrier& barrier) const
+void RM::Command::Barrier(const BufferBarrier& barrier)
 {
     Barrier(std::span{&barrier, 1});
 }
 
-void RM::Command::Barrier(const std::span<const GlobalBarrier> barriers) const
+void RM::Command::Barrier(const std::span<const GlobalBarrier> barriers)
 {
     BarrierGroup group;
     group.global_barriers = barriers;
     Barrier(std::span{&group, 1});
 }
 
-void RM::Command::Barrier(const GlobalBarrier& barrier) const
+void RM::Command::Barrier(const GlobalBarrier& barrier)
 {
     Barrier(std::span{&barrier, 1});
 }
@@ -288,11 +290,6 @@ void RM::Command::CopyTexture(const Texture* source, const Texture* dest) const
     m_command_buffer->CopyResource(dest_res, src_res);
 }
 
-static bool IsEmpty(const RM::Rect& r)
-{
-    return r.offset.x == 0 && r.offset.y == 0 && r.size.x == 0 && r.size.y == 0;
-}
-
 void RM::Command::Blit(const TextureView* source, const TextureView* dest, const BlitRegion& region)
 {
     auto src_dim = source->GetTexture()->GetDimensions();
@@ -301,10 +298,10 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
     uint32_t src_w = std::max(1u, src_dim.x >> region.src_mip);
     uint32_t src_h = std::max(1u, src_dim.y >> region.src_mip);
 
-    Rect src = IsEmpty(region.src_rect)
+    Rect src = Helpers::IsEmpty(region.src_rect)
                    ? Rect{.offset = {}, .size = {.x = src_w, .y = src_h}}
                    : region.src_rect;
-    Rect dst = IsEmpty(region.dst_rect)
+    Rect dst = Helpers::IsEmpty(region.dst_rect)
                    ? Rect{.offset = {}, .size = {.x = dst_dim.x, .y = dst_dim.y}}
                    : region.dst_rect;
 

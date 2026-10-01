@@ -1,9 +1,8 @@
 #include "rimera_helpers.hpp"
 #include "rimera_device.hpp"
-#include "dxcapi.h"
 #include "rimera_builders.hpp"
 
-RM::Pipeline* RM::Helpers::CreateBlitShader(Device* device)
+RM::Pipeline* RM::Helpers::CreateBlitShader(Device* device, Format format)
 {
     constexpr auto blit_shader = R"(
         struct BlitConstants
@@ -55,7 +54,7 @@ RM::Pipeline* RM::Helpers::CreateBlitShader(Device* device)
                         .Build();
 
     auto blit_info = GraphicsPipelineBuilder(vertex_shader, color_shader)
-                     .AddRenderTarget(Format::RGBA8_UNorm)
+                     .AddRenderTarget(format)
                      .AddBlendInfo(
                          BlendInfoBuilder()
                          .Disable()
@@ -65,7 +64,6 @@ RM::Pipeline* RM::Helpers::CreateBlitShader(Device* device)
                      .Cull(CullMode::None)
                      .Fill(FillMode::Solid)
                      .Primitive(PolygonMode::Triangle)
-                     .SampleCount(1)
                      .Build();
     return device->CreatePipeline(blit_info);
 }
@@ -113,16 +111,16 @@ static std::string_view GetStageName(RM::ShaderType type)
     return "unknown";
 }
 
-ComPtr<IDxcBlob> RM::Helpers::CompileHlsl(std::string_view source,
-                                          std::string_view entry_point,
-                                          ShaderType type)
+IDxcBlob* RM::Helpers::CompileHlsl(std::string_view source,
+                                   std::string_view entry_point,
+                                   ShaderType type)
 {
     const wchar_t* target = GetTargetProfile(type);
 
-    ComPtr<IDxcUtils> utils;
+    IDxcUtils* utils;
     CheckDxc(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)),
              "Failed to create DXC utilities");
-    ComPtr<IDxcCompiler3> compiler;
+    IDxcCompiler3* compiler;
     CheckDxc(DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler)),
              "Failed to create HLSL compiler");
 
@@ -131,14 +129,14 @@ ComPtr<IDxcBlob> RM::Helpers::CompileHlsl(std::string_view source,
         entry_point.find('\0') != std::string_view::npos)
         throw std::invalid_argument("Invalid HLSL entry point");
 
-    ComPtr<IDxcBlobEncoding> entry_utf8;
+    IDxcBlobEncoding* entry_utf8;
     CheckDxc(utils->CreateBlob(entry_point.data(),
                                static_cast<UINT32>(entry_point.size()),
                                DXC_CP_UTF8,
                                &entry_utf8),
              "Failed to copy HLSL entry point");
-    ComPtr<IDxcBlobWide> entry_wide;
-    CheckDxc(utils->GetBlobAsWide(entry_utf8.Get(), entry_wide.GetAddressOf()),
+    IDxcBlobWide* entry_wide;
+    CheckDxc(utils->GetBlobAsWide(entry_utf8, &entry_wide),
              "Failed to convert HLSL entry point");
 
     const wchar_t* arguments[] = {
@@ -148,7 +146,7 @@ ComPtr<IDxcBlob> RM::Helpers::CompileHlsl(std::string_view source,
     };
 
     const DxcBuffer buffer{source.data(), source.size(), DXC_CP_UTF8};
-    ComPtr<IDxcResult> result;
+    IDxcResult* result;
     CheckDxc(compiler->Compile(&buffer,
                                arguments,
                                std::size(arguments),
@@ -156,25 +154,36 @@ ComPtr<IDxcBlob> RM::Helpers::CompileHlsl(std::string_view source,
                                IID_PPV_ARGS(&result)),
              "Failed to invoke HLSL compiler");
 
+    utils->Release();
+    compiler->Release();
+    entry_utf8->Release();
+    entry_wide->Release();
+
     HRESULT status = S_OK;
     CheckDxc(result->GetStatus(&status), "Failed to obtain HLSL compilation status");
     if (FAILED(status))
     {
-        ComPtr<IDxcBlobUtf8> diagnostics;
-        result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&diagnostics), nullptr);
+        IDxcBlobUtf8* diagnostics;
+        CheckDxc(result->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&diagnostics), nullptr),
+                 "Failed to obtain HLSL diagnostics");
         const std::string message =
             diagnostics && diagnostics->GetStringLength()
                 ? std::string(diagnostics->GetStringPointer(), diagnostics->GetStringLength())
                 : "DXC returned no diagnostics";
+        diagnostics->Release();
+        result->Release();
         throw std::runtime_error("HLSL " + std::string(GetStageName(type)) +
                                  " shader compilation failed: " + message);
     }
 
-    ComPtr<IDxcBlob> dxil;
+    IDxcBlob* dxil;
     CheckDxc(result->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&dxil), nullptr),
              "Failed to obtain compiled DXIL");
     if (!dxil || !dxil->GetBufferSize())
+    {
+        result->Release();
         throw std::runtime_error("HLSL compiler returned empty DXIL");
+    }
     return dxil;
 }
 
@@ -192,4 +201,9 @@ bool RM::Helpers::IsDepthStencilFormat(Format format) noexcept
         default:
             return false;
     }
+}
+
+bool RM::Helpers::IsEmpty(const Rect& r)
+{
+    return r.offset.x == 0 && r.offset.y == 0 && r.size.x == 0 && r.size.y == 0;
 }

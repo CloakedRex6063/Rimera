@@ -26,7 +26,7 @@ RM::Sampler::Sampler(Device* device, const SamplerCreateInfo& info) : m_device(d
     desc.BorderColor[2] = info.border_color.z;
     desc.BorderColor[3] = info.border_color.w;
 
-    m_device->AddDescriptor(this);
+    m_index = m_device->AddDescriptor(this);
 
     native_device->CreateSampler(&desc, m_cpu_handle);
 }

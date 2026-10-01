@@ -37,6 +37,9 @@ namespace RM
         Device* m_device;
         PipelineType m_type;
 #ifdef RIMERA_MAC
+        friend class Command;
+        NS::SharedPtr<MTL::DepthStencilState> m_depth_stencil_state;
+        RasterizerState m_rasterizer_state{};
         NS::SharedPtr<MTL::RenderPipelineState> m_render_pso;
         NS::SharedPtr<MTL::ComputePipelineState> m_compute_pso;
         DispatchGroup m_compute_dispatch_group{};

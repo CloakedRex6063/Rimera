@@ -41,7 +41,10 @@ if (APPLE)
             src/metal/rimera_texture.cpp
             src/metal/rimera_shader.cpp
             src/metal/rimera_buffer.cpp
-            src/metal/rimera_as.cpp)
+            src/metal/rimera_as.cpp
+            src/metal/rimera_sampler.cpp
+            src/metal/rimera_texture_view.cpp
+   )
 elseif (WIN32)
     target_compile_definitions(Rimera PUBLIC RIMERA_WINDOWS)
 

@@ -10,8 +10,9 @@ namespace RM
     public:
         [[nodiscard]] uint32_t GetResourceIndex() const noexcept { return m_resource_index; }
         ~TextureView();
-        [[nodiscard]] Texture* GetTexture() const noexcept { return m_info.texture; }
+        [[nodiscard]] Texture* GetTexture() const noexcept;
         [[nodiscard]] Format GetFormat() const noexcept { return m_info.format; }
+        [[nodiscard]] void* GetView() const noexcept;
 
     private:
         friend class Device;
@@ -22,6 +23,11 @@ namespace RM
 #ifdef RIMERA_WINDOWS
         D3D12_CPU_DESCRIPTOR_HANDLE m_cpu_handle;
         D3D12_GPU_DESCRIPTOR_HANDLE m_gpu_handle;
+#elifdef RIMERA_MAC
+        TextureView(Device* device, MTL::Texture* drawable);
+        Texture* m_texture = nullptr;
+        bool m_owns_texture = false;
+        NS::SharedPtr<MTL::Texture> m_view = nullptr;
 #endif
     };
 }

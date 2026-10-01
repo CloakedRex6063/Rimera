@@ -1,10 +1,6 @@
 #include "rimera_shader.hpp"
-#include "dxc/dxcapi.h"
-#define IR_RUNTIME_METALCPP
-#define IR_PRIVATE_IMPLEMENTATION
-#include "metal_irconverter/metal_irconverter.h"
-#include "limits"
-#include "rimera_device.hpp"
+#include "rimera_metal.hpp"
+#include "rimera_helpers.hpp"
 #include "stdexcept"
 #include "string"
 
@@ -17,121 +13,140 @@ namespace
         return std::runtime_error(std::string(operation) + ": " +
                                   (message ? message : "Metal returned no error description"));
     }
-}  // namespace
+} // namespace
 
-void* RM::Shader::GetNativeHandle() const
+void* RM::Pipeline::GetNativeHandle() const
 {
     switch (m_type)
     {
-        case ShaderType::eCompute:
+        case PipelineType::Compute:
             return m_compute_pso.get();
-        case ShaderType::eRender:
+        case PipelineType::Graphics:
             return m_render_pso.get();
     }
     return m_render_pso.get();
 }
 
-RM::Shader::Shader(Device* device, const ComputeShaderCreateInfo& info)
-    : device(device), m_type(ShaderType::eCompute)
+RM::Pipeline::Pipeline(Device* device, const ComputePipelineCreateInfo& info)
+    : m_device(device), m_type(PipelineType::Compute)
 {
-    if (!device) throw std::invalid_argument("Compute shader creation requires a valid device");
-    if (info.code.empty()) throw std::invalid_argument("Compute shader HLSL must not be empty");
-
+    auto shader = Metal::CompileShader(device, info.shader, ShaderType::Compute);
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+    NS::Error* error = nullptr;
+    auto pipeline =
+        NS::TransferPtr(native_device->newComputePipelineState(shader.function.get(), &error));
+    if (!pipeline) throw MetalError("Failed to create compute pipeline", error);
 
-    const std::string entry_point(info.entry_point.empty() ? "main" : info.entry_point);
+    m_compute_pso = std::move(pipeline);
+    m_compute_dispatch_group = shader.compute_dispatch_group;
+}
 
-    auto dxil_blob = RM::Helpers::CompileHlsl(info.code, entry_point);
-    IRCompiler* compiler = nullptr;
-    IRObject* dxil = nullptr;
-    IRObject* ir = nullptr;
-    IRError* error = nullptr;
-    IRShaderReflection* reflection = nullptr;
-    IRMetalLibBinary* binary = nullptr;
+RM::Pipeline::Pipeline(Device* device, const GraphicsPipelineCreateInfo& info)
+    : m_device(device), m_type(PipelineType::Graphics), m_rasterizer_state(info.rasterizer_state)
+{
+    if (!device) throw std::invalid_argument("Graphics pipeline requires a valid device");
+    if (info.rtv_formats.size() > 8)
+        throw std::invalid_argument("Metal supports at most eight color attachments");
+    if (info.blend_infos.size() > info.rtv_formats.size())
+        throw std::invalid_argument("Blend entries exceed the number of color attachments");
 
-    try
+    Metal::ToCullMode(info.rasterizer_state.cull_mode);
+    Metal::ToWinding(info.rasterizer_state.front_face);
+    Metal::ToTriangleFillMode(info.rasterizer_state.fill_mode);
+
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+    auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
+    auto descriptor = NS::TransferPtr(MTL::RenderPipelineDescriptor::alloc()->init());
+    descriptor->setInputPrimitiveTopology(Metal::ToPrimitiveTopologyClass(info.polygon_mode));
+    descriptor->setRasterizationEnabled(true);
+    descriptor->setRasterSampleCount(1);
+    descriptor->setAlphaToCoverageEnabled(false);
+    descriptor->setAlphaToOneEnabled(false);
+
+    for (size_t i = 0; i < info.rtv_formats.size(); ++i)
     {
-        compiler = IRCompilerCreate();
-        if (!compiler) throw std::runtime_error("Failed to create Metal shader converter compiler");
-        IRCompilerSetEntryPointName(compiler, entry_point.c_str());
+        const auto format = Metal::ToPixelFormat(info.rtv_formats[i]);
+        if (format == MTL::PixelFormatInvalid || Helpers::IsDepthStencilFormat(info.rtv_formats[i]))
+            throw std::invalid_argument("Invalid color attachment format");
+        auto* attachment = descriptor->colorAttachments()->object(i);
+        attachment->setPixelFormat(format);
+        attachment->setWriteMask(MTL::ColorWriteMaskAll);
+        attachment->setBlendingEnabled(false);
+        if (i >= info.blend_infos.size()) continue;
+        const auto& blend = info.blend_infos[i];
+        if (blend.logic_op_enable)
+            throw std::invalid_argument("Metal does not support color logic operations");
+        attachment->setBlendingEnabled(blend.blend_enable);
 
-        dxil = IRObjectCreateFromDXIL(static_cast<const uint8_t*>(dxil_blob->GetBufferPointer()),
-                                      dxil_blob->GetBufferSize(),
-                                      IRBytecodeOwnershipNone);
-        if (!dxil) throw std::runtime_error("Failed to create DXIL object");
-
-        const auto* root_sig = static_cast<IRRootSignature*>(device->GetNativeRootSignature());
-        IRCompilerSetGlobalRootSignature(compiler, root_sig);
-
-        ir = IRCompilerAllocCompileAndLink(compiler, nullptr, dxil, &error);
-        if (!ir)
-            throw std::runtime_error(
-                "DXIL compute shader conversion failed (converter error " +
-                (error ? std::to_string(IRErrorGetCode(error)) : "unavailable") + ")");
-        if (IRObjectGetMetalIRShaderStage(ir) != IRShaderStageCompute)
-            throw std::runtime_error("DXIL must contain a compute shader");
-
-        reflection = IRShaderReflectionCreate();
-        if (!reflection) throw std::runtime_error("Failed to create compute shader reflection");
-        if (!IRObjectGetReflection(ir, IRShaderStageCompute, reflection))
-            throw std::runtime_error("Failed to obtain compute shader reflection");
-
-        IRVersionedCSInfo compute_info{};
-        if (!IRShaderReflectionCopyComputeInfo(reflection, IRReflectionVersion_1_0, &compute_info))
-            throw std::runtime_error("Failed to obtain compute shader threadgroup size");
-        const DispatchGroup group{compute_info.info_1_0.tg_size[0],
-                                  compute_info.info_1_0.tg_size[1],
-                                  compute_info.info_1_0.tg_size[2]};
-        IRShaderReflectionReleaseComputeInfo(&compute_info);
-        if (!group.x || !group.y || !group.z)
-            throw std::runtime_error("Compute shader has an invalid threadgroup size");
-
-        const char* metal_entry_point = IRShaderReflectionGetEntryPointFunctionName(reflection);
-        if (!metal_entry_point || !*metal_entry_point)
-            throw std::runtime_error("Compute shader reflection has no entry point");
-
-        binary = IRMetalLibBinaryCreate();
-        if (!binary) throw std::runtime_error("Failed to create compute shader metallib object");
-        if (!IRObjectGetMetalLibBinary(ir, IRShaderStageCompute, binary))
-            throw std::runtime_error("Failed to extract compute shader metallib");
-
-        const auto bytecode = IRMetalLibGetBytecodeData(binary);
-        if (!bytecode || !IRMetalLibGetBytecodeSize(binary))
-            throw std::runtime_error("Compute shader metallib is empty");
-
-        auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
-        NS::Error* metal_error = nullptr;
-        auto library = NS::TransferPtr(native_device->newLibrary(bytecode, &metal_error));
-        if (!library) throw MetalError("Failed to load compute shader metallib", metal_error);
-        auto function = NS::TransferPtr(
-            library->newFunction(NS::String::string(metal_entry_point, NS::UTF8StringEncoding)));
-        if (!function)
-            throw std::runtime_error(std::string("Metal compute entry point not found: ") +
-                                     metal_entry_point);
-
-        metal_error = nullptr;
-        auto pipeline =
-            NS::TransferPtr(native_device->newComputePipelineState(function.get(), &metal_error));
-        if (!pipeline) throw MetalError("Failed to create compute pipeline", metal_error);
-
-        m_compute_pso = std::move(pipeline);
-        m_compute_dispatch_group = group;
-    }
-    catch (...)
-    {
-        if (binary) IRMetalLibBinaryDestroy(binary);
-        if (reflection) IRShaderReflectionDestroy(reflection);
-        if (ir) IRObjectDestroy(ir);
-        if (error) IRErrorDestroy(error);
-        if (dxil) IRObjectDestroy(dxil);
-        if (compiler) IRCompilerDestroy(compiler);
-        throw;
+        if (!blend.blend_enable) continue;
+        attachment->setSourceRGBBlendFactor(Metal::ToBlendFactor(blend.src_color_factor));
+        attachment->setDestinationRGBBlendFactor(Metal::ToBlendFactor(blend.dst_color_factor));
+        attachment->setRgbBlendOperation(Metal::ToBlendOperation(blend.color_blend_op));
+        attachment->setSourceAlphaBlendFactor(Metal::ToBlendFactor(blend.src_alpha_factor));
+        attachment->setDestinationAlphaBlendFactor(Metal::ToBlendFactor(blend.dst_alpha_factor));
+        attachment->setAlphaBlendOperation(Metal::ToBlendOperation(blend.alpha_blend_op));
     }
 
-    IRMetalLibBinaryDestroy(binary);
-    IRShaderReflectionDestroy(reflection);
-    IRObjectDestroy(ir);
-    if (error) IRErrorDestroy(error);
-    IRObjectDestroy(dxil);
-    IRCompilerDestroy(compiler);
+    descriptor->setDepthAttachmentPixelFormat(MTL::PixelFormatInvalid);
+    descriptor->setStencilAttachmentPixelFormat(MTL::PixelFormatInvalid);
+    if (info.dsv_format)
+    {
+        const auto format = *info.dsv_format;
+        if (!Helpers::IsDepthStencilFormat(format))
+            throw std::invalid_argument("Invalid depth/stencil attachment format");
+        if (format != Format::Stencil8)
+            descriptor->setDepthAttachmentPixelFormat(Metal::ToPixelFormat(format));
+        if (format == Format::Stencil8 || format == Format::Depth24_UNorm_Stencil8 ||
+            format == Format::Depth32_Float_Stencil8)
+            descriptor->setStencilAttachmentPixelFormat(Metal::ToPixelFormat(format));
+    }
+
+    const auto& depth = info.depth_stencil_state;
+    if (depth.depth_enable && descriptor->depthAttachmentPixelFormat() == MTL::PixelFormatInvalid)
+        throw std::invalid_argument("Depth testing requires a depth attachment format");
+    if (depth.stencil_enable && descriptor->stencilAttachmentPixelFormat() ==
+        MTL::PixelFormatInvalid)
+        throw std::invalid_argument("Stencil testing requires a stencil attachment format");
+    auto depth_descriptor = NS::TransferPtr(MTL::DepthStencilDescriptor::alloc()->init());
+    depth_descriptor->setDepthCompareFunction(depth.depth_enable
+                                                  ? Metal::ToCompareFunction(depth.depth_test)
+                                                  : MTL::CompareFunctionAlways);
+    depth_descriptor->setDepthWriteEnabled(depth.depth_enable && depth.depth_write_enable);
+    if (depth.stencil_enable)
+    {
+        const auto make_stencil = [&](const StencilOpState& state)
+        {
+            auto stencil = NS::TransferPtr(MTL::StencilDescriptor::alloc()->init());
+            stencil->setStencilCompareFunction(Metal::ToCompareFunction(state.StencilFunc));
+            stencil->setStencilFailureOperation(Metal::ToStencilOperation(state.StencilFailOp));
+            stencil->setDepthFailureOperation(Metal::ToStencilOperation(state.StencilDepthFailOp));
+            stencil->setDepthStencilPassOperation(Metal::ToStencilOperation(state.StencilPassOp));
+            stencil->setReadMask(depth.stencil_read_mask);
+            stencil->setWriteMask(depth.stencil_write_mask);
+            return stencil;
+        };
+        auto front = make_stencil(depth.front_stencil_op);
+        auto back = make_stencil(depth.back_stencil_op);
+        depth_descriptor->setFrontFaceStencil(front.get());
+        depth_descriptor->setBackFaceStencil(back.get());
+    }
+
+    auto vertex_shader = Metal::CompileShader(device, info.vertex_shader, ShaderType::Vertex);
+    auto frag_shader = Metal::CompileShader(device, info.fragment_shader, ShaderType::Fragment);
+    auto vertex_descriptor = Metal::CreateVertexDescriptor(info.input_state,
+                                                           vertex_shader.reflection.get());
+    descriptor->setVertexDescriptor(vertex_descriptor.get());
+    descriptor->setVertexFunction(vertex_shader.function.get());
+    descriptor->setFragmentFunction(frag_shader.function.get());
+
+    NS::Error* error = nullptr;
+    auto pipeline =
+        NS::TransferPtr(native_device->newRenderPipelineState(descriptor.get(), &error));
+    if (!pipeline) throw MetalError("Failed to create graphics pipeline", error);
+    auto depth_state = NS::TransferPtr(native_device->newDepthStencilState(depth_descriptor.get()));
+    if (!depth_state) throw std::runtime_error("Failed to create graphics depth/stencil state");
+
+    m_render_pso = std::move(pipeline);
+    m_depth_stencil_state = std::move(depth_state);
 }

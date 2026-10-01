@@ -127,7 +127,6 @@ namespace RM
 
     enum class Format : uint16_t
     {
-        Invalid,
         A8_UNorm,
         R8_UNorm,
         R8_UNorm_sRGB,
@@ -350,9 +349,6 @@ namespace RM
         float slope_scaled_depth_bias = 0;
         bool depth_clip_enable = false;
         bool multisample_enable = false;
-        uint32_t sample_count = 0;
-        bool antialiased_line_enable = false;
-        bool conservative_raster = false;
     };
 
     enum class BlendFactor
@@ -456,7 +452,6 @@ namespace RM
         LineStrip,
         TriangleList,
         TriangleStrip,
-        TriangleFan,
     };
 
     struct VertexInputState
@@ -668,6 +663,13 @@ namespace RM
         Border,
     };
 
+    enum class BorderColor
+    {
+        Black,
+        White,
+        TransparentBlack,
+    };
+
     struct SamplerCreateInfo
     {
         Filter min_filter = Filter::Linear;
@@ -677,8 +679,8 @@ namespace RM
         Wrap wrap_w = Wrap::Repeat;
         float min_lod = 0;
         float max_lod = 13;
-        uint32_t max_anisotropy;
-        Float4 border_color = {};
+        uint32_t max_anisotropy = 0;
+        BorderColor border_color = BorderColor::Black;
         ComparisonFunc comparison_func = ComparisonFunc::Never;
         ReductionType reduction_type = ReductionType::Standard;
     };

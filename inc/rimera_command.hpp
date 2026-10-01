@@ -13,14 +13,11 @@ namespace RM
     public:
         ~Command();
 
-        void Begin() const;
+        void Begin();
         void End() const;
 
-        void BeginRenderPass(const RenderPassCreateInfo& info) const;
+        void BeginRenderPass(const RenderPassCreateInfo& info);
         void EndRenderPass();
-
-        void BeginComputePass();
-        void EndComputePass();
 
         void Draw(uint32_t vertex_count,
                   uint32_t instance_count,
@@ -33,25 +30,25 @@ namespace RM
                          uint32_t start_instance) const;
 
         void DispatchMesh(DispatchGroup dispatch_group) const;
-        void Dispatch(DispatchGroup dispatch_group) const;
+        void Dispatch(DispatchGroup dispatch_group);
 
-        void BindShader(const Pipeline* shader) const;
+        void BindShader(const Pipeline* shader);
         void BindConstantBuffer(uint32_t slot, const Buffer* buffer) const;
+        void BindIndexBuffer(const Buffer* buffer, Format format);
 
-        void Barrier(const std::span<const BarrierGroup>& groups) const;
-        void Barrier(const BarrierGroup& group) const;
-        void Barrier(std::span<const TextureBarrier> barriers) const;
-        void Barrier(const TextureBarrier& barrier) const;
-        void Barrier(std::span<const BufferBarrier> barriers) const;
-        void Barrier(const BufferBarrier& barrier) const;
-        void Barrier(std::span<const GlobalBarrier> barriers) const;
-        void Barrier(const GlobalBarrier& barrier) const;
+        void Barrier(const BarrierGroup& group);
+        void Barrier(std::span<const TextureBarrier> barriers);
+        void Barrier(const TextureBarrier& barrier);
+        void Barrier(std::span<const BufferBarrier> barriers);
+        void Barrier(const BufferBarrier& barrier);
+        void Barrier(std::span<const GlobalBarrier> barriers);
+        void Barrier(const GlobalBarrier& barrier);
 
         void SetViewport(const Viewport& viewport) const;
         void SetScissor(const Rect& rect) const;
-        void SetPrimitiveTopology(PrimitiveTopology topology) const;
+        void SetPrimitiveTopology(PrimitiveTopology topology);
 
-        void CopyTexture(const Texture* source, const Texture* dest) const;
+        void CopyTexture(const Texture* source, const Texture* dest);
         void Blit(const TextureView* source, const TextureView* dest, const BlitRegion& region);
 
         [[nodiscard]] void* GetNativeCommand() const;
@@ -71,22 +68,44 @@ namespace RM
         friend class CommandRing;
         friend class Device;
         Device* m_device;
+
+        struct IndexBufferBinding
+        {
+            uint64_t address = 0;
+            uint32_t length = 0;
+            uint32_t index_size = 0;
+        };
+
+        IndexBufferBinding m_index_buffer{};
 #ifdef RIMERA_MAC
         NS::SharedPtr<MTL4::CommandBuffer> m_command_buffer;
         NS::SharedPtr<MTL4::CommandAllocator> m_command_allocator;
+        NS::SharedPtr<MTL4::ArgumentTable> m_vertex_arg_table;
 
         MTL4::RenderCommandEncoder* m_render_encoder = nullptr;
         MTL4::ComputeCommandEncoder* m_compute_encoder = nullptr;
+        
+        void GetComputeEncoder();
+        
         DispatchGroup m_threads_per_mesh{};
         DispatchGroup m_threads_per_ampl{};
         DispatchGroup m_threads_per_compute{};
+        MTL::PrimitiveType m_primitive_type = MTL::PrimitiveTypeTriangle;
+
+        struct PendingBarrier
+        {
+            MTL::Stages src_stage;
+            MTL::Stages dst_stage;
+        };
+
+        std::vector<PendingBarrier> m_pending_barriers;
+
 #elifdef RIMERA_WINDOWS
         ComPtr<ID3D12GraphicsCommandList10> m_command_buffer;
         ComPtr<ID3D12CommandAllocator> m_command_allocator;
-        Buffer* m_blit_buffer; // Reuse later if more custom functionality is added
-        Pipeline* m_blit_shader;
 #endif
         Sampler* m_sampler = nullptr;
+        Buffer* m_blit_buffer; // Reuse later if more custom functionality is added
     };
 
     class CommandRing

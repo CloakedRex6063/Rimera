@@ -2,14 +2,20 @@
 #include "rimera_metal.hpp"
 #define IR_RUNTIME_METALCPP
 #define IR_PRIVATE_IMPLEMENTATION
+#include "rimera_helpers.hpp"
 #include "metal_irconverter_runtime/metal_irconverter_runtime.h"
 #include "metal_irconverter/metal_irconverter.h"
+
+void RM::DestroyDevice(const Device* device)
+{
+    delete device;
+}
 
 RM::Device::Device(const DeviceCreateInfo& info)
 {
     m_device = NS::TransferPtr(MTL::CreateSystemDefaultDevice());
     m_swap_layer = Metal::CreateSwapLayer(m_device, info);
-    m_core_residency_set = std::shared_ptr<ResidencySet>(CreateResidencySet());
+    m_core_residency_set = CreateResidencySet();
     m_resource_descriptor_heap = NS::TransferPtr(
         m_device->newBuffer(sizeof(IRDescriptorTableEntry) * info.resource_descriptor_count,
                             MTL::ResourceStorageModeShared));
@@ -20,55 +26,93 @@ RM::Device::Device(const DeviceCreateInfo& info)
     m_core_residency_set->AddAllocation(m_resource_descriptor_heap.get());
     m_core_residency_set->AddAllocation(m_sampler_descriptor_heap.get());
 
+    m_graphics_queue = CreateQueue(QueueType::Graphics);
+
     CreateRootSignature();
 
     m_core_residency_set->Commit();
     m_core_residency_set->RequestResidency();
+
+    m_blit_pipelines[Format::BGRA8_UNorm] = Helpers::CreateBlitShader(this, Format::BGRA8_UNorm);
+    m_blit_pipelines[Format::BGRA10_XR_sRGB] = Helpers::CreateBlitShader(
+        this,
+        Format::BGRA10_XR_sRGB);
 }
 
 RM::Device::~Device()
 {
-    for (auto& [key, value] : m_swapchain_descriptors)
-    {
-        RemoveDescriptor(value);
-    }
+    m_core_residency_set->RemoveAllAllocations();
+    m_core_residency_set->EndResidency();
 }
 
-RM::Fence* RM::Device::CreateFence() const { return new Fence(m_device); }
+RM::Fence* RM::Device::CreateFence() { return new Fence(this); }
 
 void RM::Device::DestroyFence(const Fence* fence) { delete fence; }
 
-RM::Queue* RM::Device::CreateQueue(QueueType) const
+RM::Queue* RM::Device::CreateQueue(const QueueType type)
 {
-    auto* queue = new Queue(m_device);
+    auto* queue = new Queue(this, type);
     queue->AddResidencySet(m_swap_layer->residencySet());
-    queue->AddResidencySet(m_core_residency_set.get());
+    queue->AddResidencySet(m_core_residency_set);
     return queue;
 }
 
 void RM::Device::DestroyQueue(const Queue* queue) { delete queue; }
 
-RM::Command* RM::Device::CreateCommand(CommandType) { return new Command(this); }
+RM::Command* RM::Device::CreateCommand(CommandType type) { return new Command(this, type); }
 
 void RM::Device::DestroyCommand(const Command* command) const { delete command; }
 
-RM::CommandRing* RM::Device::CreateCommandRing(QueueType) { return new CommandRing(this); }
+RM::CommandRing* RM::Device::CreateCommandRing(QueueType type)
+{
+    return new CommandRing(this, type);
+}
 
 void RM::Device::DestroyCommandRing(const CommandRing* command_ring) const { delete command_ring; }
 
-RM::ResidencySet* RM::Device::CreateResidencySet() const { return new ResidencySet(m_device); }
+RM::ResidencySet* RM::Device::CreateResidencySet() { return new ResidencySet(this); }
 
 void RM::Device::DestroyResidencySet(const ResidencySet* residency_set) const
 {
     delete residency_set;
 }
 
-RM::Shader* RM::Device::CreateShader(ComputeShaderCreateInfo info)
+RM::Pipeline* RM::Device::CreatePipeline(const ComputePipelineCreateInfo& info)
 {
-    return new Shader(this, info);
+    return new Pipeline(this, info);
 }
 
-void RM::Device::DestroyShader(const Shader* shader) { delete shader; }
+RM::Pipeline* RM::Device::CreatePipeline(const GraphicsPipelineCreateInfo& info)
+{
+    return new Pipeline(this, info);
+}
+
+RM::TextureView* RM::Device::CreateTextureView(const TextureViewCreateInfo& info)
+{
+    return new TextureView(this, info);
+}
+
+void RM::Device::DestroyTextureView(const TextureView* texture_view) const
+{
+    delete texture_view;
+}
+
+RM::Sampler* RM::Device::CreateSampler(const SamplerCreateInfo& info)
+{
+    return new Sampler(this, info);
+}
+
+void RM::Device::DestroySampler(const Sampler* sampler)
+{
+    delete sampler;
+}
+
+RM::TextureView* RM::Device::GetCurrentBackBuffer()
+{
+    return new TextureView(this, m_drawable->texture());
+}
+
+void RM::Device::DestroyPipeline(const Pipeline* shader) { delete shader; }
 
 RM::Texture* RM::Device::CreateTexture(const TextureCreateInfo& info)
 {
@@ -84,18 +128,11 @@ RM::Buffer* RM::Device::CreateBuffer(const BufferCreateInfo& info)
 
 void RM::Device::DestroyBuffer(const Buffer* buffer) { delete buffer; }
 
-void* RM::Device::GetCurrentPresentable() const { return m_drawable; }
-
-uint32_t RM::Device::GetCurrentPresentableDescriptor() const
-{
-    return m_swapchain_descriptors.at(m_drawable->texture()->gpuResourceID()._impl);
-}
-
 void RM::Device::NewFrame(Queue* queue)
 {
     m_frame_pool.reset();
     m_frame_pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
-    
+
     m_drawable = m_swap_layer->nextDrawable();
     if (!m_drawable) throw std::runtime_error("Failed to acquire a swapchain drawable");
 
@@ -106,7 +143,8 @@ void RM::Device::NewFrame(Queue* queue)
         m_swapchain_descriptors.emplace(resource_id, AddDescriptor(texture));
     }
 
-    queue->Wait(m_drawable);
+    auto* native_queue = static_cast<MTL4::CommandQueue*>(queue->GetNativeHandle());
+    native_queue->wait(m_drawable);
 }
 
 void RM::Device::Resize(uint32_t width, uint32_t height)
@@ -117,11 +155,6 @@ void RM::Device::Resize(uint32_t width, uint32_t height)
     if (current_size.width == width && current_size.height == height) return;
 
     m_drawable = nullptr;
-    for (const auto& [resource_id, descriptor] : m_swapchain_descriptors)
-    {
-        RemoveDescriptor(descriptor);
-    }
-    m_swapchain_descriptors.clear();
 
     m_swap_layer->setDrawableSize(CGSizeMake(width, height));
 }
@@ -130,7 +163,7 @@ void* RM::Device::GetNativeHandle() const { return m_device.get(); }
 
 void RM::Device::CreateRootSignature()
 {
-    IRRootParameter1 params[2]{};  // Bump to 3 when adding push constants
+    IRRootParameter1 params[2]{}; // Bump to 3 when adding push constants
 
     params[0].ParameterType = IRRootParameterTypeCBV;
     params[0].ShaderVisibility = IRShaderVisibilityAll;
@@ -178,32 +211,31 @@ void RM::Device::CreateRootSignature()
 uint32_t RM::Device::AddDescriptor(MTL::Texture* texture)
 {
     uint32_t descriptor = 0;
-    if (m_free_list.empty())
+    if (m_free_resources.empty())
     {
-        descriptor = m_current_descriptor++;
+        descriptor = m_current_resource++;
     }
     else
     {
-        descriptor = m_free_list.back();
-        m_free_list.pop_back();
+        descriptor = m_free_resources.back();
+        m_free_resources.pop_back();
     }
     auto* entries = static_cast<IRDescriptorTableEntry*>(m_resource_descriptor_heap->contents());
     IRDescriptorTableSetTexture(&entries[descriptor], texture, 0.0f, 0);
-
     return descriptor;
 }
 
 uint32_t RM::Device::AddDescriptor(const Buffer* buffer)
 {
     uint32_t descriptor = 0;
-    if (m_free_list.empty())
+    if (m_free_resources.empty())
     {
-        descriptor = m_current_descriptor++;
+        descriptor = m_current_resource++;
     }
     else
     {
-        descriptor = m_free_list.back();
-        m_free_list.pop_back();
+        descriptor = m_free_resources.back();
+        m_free_resources.pop_back();
     }
     auto* entries = static_cast<IRDescriptorTableEntry*>(m_resource_descriptor_heap->contents());
     auto* native_buffer = static_cast<MTL::Buffer*>(buffer->GetNativeHandle());
@@ -212,25 +244,57 @@ uint32_t RM::Device::AddDescriptor(const Buffer* buffer)
     return descriptor;
 }
 
-uint32_t RM::Device::AddDescriptor(const Texture* texture)
+uint32_t RM::Device::AddDescriptor(const TextureView* texture)
 {
     uint32_t descriptor = 0;
-    if (m_free_list.empty())
+    if (m_free_resources.empty())
     {
-        descriptor = m_current_descriptor++;
+        descriptor = m_current_resource++;
     }
     else
     {
-        descriptor = m_free_list.back();
-        m_free_list.pop_back();
+        descriptor = m_free_resources.back();
+        m_free_resources.pop_back();
     }
     auto* entries = static_cast<IRDescriptorTableEntry*>(m_resource_descriptor_heap->contents());
-    auto* native_texture = static_cast<MTL::Texture*>(texture->GetNativeHandle());
+    auto* native_texture = static_cast<MTL::Texture*>(texture->GetView());
     IRDescriptorTableSetTexture(&entries[descriptor], native_texture, 0.0f, 0);
 
     return descriptor;
 }
 
-void RM::Device::RemoveDescriptor(uint32_t descriptor) { m_free_list.emplace_back(descriptor); }
+uint32_t RM::Device::AddDescriptor(Sampler* sampler)
+{
+    uint32_t descriptor = 0;
+    if (m_free_resources.empty())
+    {
+        descriptor = m_current_resource++;
+    }
+    else
+    {
+        descriptor = m_free_resources.back();
+        m_free_resources.pop_back();
+    }
+    auto* entries = static_cast<IRDescriptorTableEntry*>(m_resource_descriptor_heap->contents());
+    auto* native_sampler = static_cast<MTL::SamplerState*>(sampler->GetNativeHandle());
+    IRDescriptorTableSetSampler(&entries[descriptor], native_sampler, 0.0f);
+
+    return descriptor;
+}
+
+void RM::Device::RemoveDescriptor(const Buffer* buffer)
+{
+    m_free_resources.emplace_back(buffer->GetResourceIndex());
+}
+
+void RM::Device::RemoveDescriptor(const TextureView* texture)
+{
+    m_free_resources.emplace_back(texture->GetResourceIndex());
+}
+
+void RM::Device::RemoveDescriptor(const Sampler* sampler)
+{
+    m_free_resources.emplace_back(sampler->GetSamplerIndex());
+}
 
 void* RM::Device::GetNativeRootSignature() const { return m_root_sig; }

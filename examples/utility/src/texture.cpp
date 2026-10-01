@@ -11,6 +11,7 @@ Texture::Texture(RM::Device* device, const std::filesystem::path& path, bool srg
     auto* pixels = stbi_load(path.string().c_str(), &width, &height, &channels, 4);
     Initialize(device, pixels, width, height, srgb);
 }
+
 Texture::Texture(RM::Device* device, std::span<const std::byte> encoded, bool srgb, TextureSampler sampler) : m_sampler(sampler)
 {
     if (encoded.size() > INT_MAX) throw std::runtime_error("Encoded texture exceeds stb size limit");

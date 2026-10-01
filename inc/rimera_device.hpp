@@ -67,7 +67,7 @@ namespace RM
             return m_graphics_queue;
         }
 
-        TextureView* GetCurrentBackBuffer() const;
+        TextureView* GetCurrentBackBuffer();
 
         void NewFrame(Queue* queue);
 
@@ -80,8 +80,8 @@ namespace RM
         Queue* m_graphics_queue;
 
         [[nodiscard]] uint32_t AddDescriptor(const Buffer* buffer);
-        [[nodiscard]] uint32_t AddDescriptor(TextureViewType view_type);
-        void AddDescriptor(Sampler* sampler);
+        [[nodiscard]] uint32_t AddDescriptor(const TextureView* texture);
+        [[nodiscard]] uint32_t AddDescriptor(Sampler* sampler);
         void RemoveDescriptor(const Buffer* buffer);
         void RemoveDescriptor(const TextureView* texture);
         void RemoveDescriptor(const Sampler* sampler);
@@ -109,8 +109,13 @@ namespace RM
         CA::MetalDrawable* m_drawable = nullptr;
         IRRootSignature* m_root_sig = nullptr;
         std::unordered_map<uint64_t, uint32_t> m_swapchain_descriptors{};
-        uint32_t m_current_descriptor = 0;
-        std::vector<uint32_t> m_free_list;
+        uint32_t m_current_resource = 0;
+        std::vector<uint32_t> m_free_resources;
+
+        std::unordered_map<Format, Pipeline*> m_blit_pipelines;
+
+        uint32_t m_current_sampler = 0;
+        std::vector<uint32_t> m_free_samplers;
 #elifdef RIMERA_WINDOWS
         struct DescriptorHeap
         {

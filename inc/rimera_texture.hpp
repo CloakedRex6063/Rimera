@@ -13,7 +13,7 @@ namespace RM
         [[nodiscard]] Format GetFormat() const noexcept { return m_format; }
         [[nodiscard]] EnumFlags<TextureUsage> GetUsage() const noexcept { return m_usage; }
         [[nodiscard]] UInt2 GetDimensions() const noexcept;
-        [[nodiscard]] uint32_t GetMipLevels() const;
+        [[nodiscard]] uint32_t GetMipLevels() const noexcept;
 
     private:
         Texture(Device* device, const TextureCreateInfo& info);
@@ -22,8 +22,10 @@ namespace RM
         EnumFlags<TextureUsage> m_usage;
 
         friend class Device;
+        friend class TextureView;
         Device* m_device;
 #ifdef RIMERA_MAC
+        Texture(Device* device, const NS::SharedPtr<MTL::Texture>& texture);
         NS::SharedPtr<MTL::Texture> m_texture;
 #elifdef RIMERA_WINDOWS
         Texture(Device* device, ID3D12Resource* resource, EnumFlags<TextureUsage> usage);

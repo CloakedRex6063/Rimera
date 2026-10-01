@@ -1,15 +1,365 @@
-#include "Metal/Metal.h"
-#include "QuartzCore/QuartzCore.h"
-#include "Foundation/Foundation.h"
-#include "AppKit/AppKit.h"
 #include "rimera_metal.hpp"
+#include "rimera_helpers.hpp"
+#include "dxc/dxcapi.h"
+#include "metal_irconverter/metal_irconverter.h"
+#define IR_RUNTIME_METALCPP
+#include "metal_irconverter_runtime/metal_irconverter_runtime.h"
+#include "stdexcept"
+#include "string"
+#include "utility"
+
+namespace
+{
+    std::pair<IRShaderStage, const char*> ShaderStage(RM::ShaderType type)
+    {
+        switch (type)
+        {
+            case RM::ShaderType::Compute: return {IRShaderStageCompute, "compute"};
+            case RM::ShaderType::Vertex: return {IRShaderStageVertex, "vertex"};
+            case RM::ShaderType::Fragment: return {IRShaderStageFragment, "fragment"};
+            case RM::ShaderType::Mesh: return {IRShaderStageMesh, "mesh"};
+            case RM::ShaderType::Amplification: return {IRShaderStageAmplification, "amplification"};
+        }
+        throw std::invalid_argument("Unsupported shader type");
+    }
+
+    std::runtime_error MetalError(const std::string& operation, const NS::Error* error)
+    {
+        const auto* description = error ? error->localizedDescription() : nullptr;
+        const char* message = description ? description->utf8String() : nullptr;
+        return std::runtime_error(operation + ": " +
+                                  (message ? message : "Metal returned no error description"));
+    }
+}
+
+void RM::Metal::ShaderReflectionDeleter::operator()(IRShaderReflection* reflection) const noexcept
+{
+    IRShaderReflectionDestroy(reflection);
+}
+
+RM::Metal::CompiledShader RM::Metal::CompileShader(Device* device,
+                                                  const ShaderCreateInfo& info,
+                                                  ShaderType type)
+{
+    const auto [stage, stage_name] = ShaderStage(type);
+    const std::string shader_name = std::string(stage_name) + " shader";
+    if (!device) throw std::invalid_argument(shader_name + " creation requires a valid device");
+    if (info.code.empty()) throw std::invalid_argument(shader_name + " HLSL must not be empty");
+
+    const std::string entry_point(info.entry_point.empty() ? "main" : info.entry_point);
+    const auto release_blob = [](IDxcBlob* blob) { blob->Release(); };
+    std::unique_ptr<IDxcBlob, decltype(release_blob)> dxil_blob(
+        Helpers::CompileHlsl(info.code, entry_point, type), release_blob);
+    std::unique_ptr<IRCompiler, decltype(&IRCompilerDestroy)> compiler(
+        IRCompilerCreate(), IRCompilerDestroy);
+    if (!compiler) throw std::runtime_error("Failed to create Metal shader converter compiler");
+    IRCompilerSetEntryPointName(compiler.get(), entry_point.c_str());
+    if (type == ShaderType::Vertex)
+        IRCompilerSetStageInGenerationMode(compiler.get(), IRStageInCodeGenerationModeUseMetalVertexFetch);
+
+    std::unique_ptr<IRObject, decltype(&IRObjectDestroy)> dxil(
+        IRObjectCreateFromDXIL(static_cast<const uint8_t*>(dxil_blob->GetBufferPointer()),
+                               dxil_blob->GetBufferSize(), IRBytecodeOwnershipNone),
+        IRObjectDestroy);
+    if (!dxil) throw std::runtime_error("Failed to create DXIL object");
+    const auto* root_sig = static_cast<IRRootSignature*>(device->GetNativeRootSignature());
+    IRCompilerSetGlobalRootSignature(compiler.get(), root_sig);
+
+    IRError* converter_error = nullptr;
+    std::unique_ptr<IRObject, decltype(&IRObjectDestroy)> ir(
+        IRCompilerAllocCompileAndLink(compiler.get(), nullptr, dxil.get(), &converter_error),
+        IRObjectDestroy);
+    std::unique_ptr<IRError, decltype(&IRErrorDestroy)> error(converter_error, IRErrorDestroy);
+    if (!ir)
+        throw std::runtime_error("DXIL " + shader_name + " conversion failed (converter error " +
+                                 (error ? std::to_string(IRErrorGetCode(error.get())) : "unavailable") + ")");
+    if (IRObjectGetMetalIRShaderStage(ir.get()) != stage)
+        throw std::runtime_error("DXIL must contain a " + shader_name);
+
+    CompiledShader result;
+    result.reflection.reset(IRShaderReflectionCreate());
+    if (!result.reflection) throw std::runtime_error("Failed to create " + shader_name + " reflection");
+    if (!IRObjectGetReflection(ir.get(), stage, result.reflection.get()))
+        throw std::runtime_error("Failed to obtain " + shader_name + " reflection");
+
+    if (type == ShaderType::Compute)
+    {
+        IRVersionedCSInfo compute_info{};
+        if (!IRShaderReflectionCopyComputeInfo(result.reflection.get(), IRReflectionVersion_1_0,
+                                                &compute_info))
+            throw std::runtime_error("Failed to obtain compute shader threadgroup size");
+        result.compute_dispatch_group = {compute_info.info_1_0.tg_size[0],
+                                         compute_info.info_1_0.tg_size[1],
+                                         compute_info.info_1_0.tg_size[2]};
+        IRShaderReflectionReleaseComputeInfo(&compute_info);
+        const auto group = result.compute_dispatch_group;
+        if (!group.x || !group.y || !group.z)
+            throw std::runtime_error("Compute shader has an invalid threadgroup size");
+    }
+
+    const char* metal_entry_point = IRShaderReflectionGetEntryPointFunctionName(result.reflection.get());
+    if (!metal_entry_point || !*metal_entry_point)
+        throw std::runtime_error(shader_name + " reflection has no entry point");
+
+    std::unique_ptr<IRMetalLibBinary, decltype(&IRMetalLibBinaryDestroy)> binary(
+        IRMetalLibBinaryCreate(), IRMetalLibBinaryDestroy);
+    if (!binary) throw std::runtime_error("Failed to create " + shader_name + " metallib object");
+    if (!IRObjectGetMetalLibBinary(ir.get(), stage, binary.get()))
+        throw std::runtime_error("Failed to extract " + shader_name + " metallib");
+    const auto bytecode = IRMetalLibGetBytecodeData(binary.get());
+    if (!bytecode || !IRMetalLibGetBytecodeSize(binary.get()))
+        throw std::runtime_error(shader_name + " metallib is empty");
+
+    auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+    NS::Error* metal_error = nullptr;
+    auto library = NS::TransferPtr(native_device->newLibrary(bytecode, &metal_error));
+    if (!library) throw MetalError("Failed to load " + shader_name + " metallib", metal_error);
+    result.function = NS::TransferPtr(
+        library->newFunction(NS::String::string(metal_entry_point, NS::UTF8StringEncoding)));
+    if (!result.function)
+        throw std::runtime_error("Metal " + std::string(stage_name) + " entry point not found: " +
+                                 metal_entry_point);
+    return result;
+}
+
+MTL::BlendFactor RM::Metal::ToBlendFactor(BlendFactor factor)
+{
+    switch (factor)
+    {
+        case BlendFactor::Zero: return MTL::BlendFactorZero;
+        case BlendFactor::One: return MTL::BlendFactorOne;
+        case BlendFactor::SrcColor: return MTL::BlendFactorSourceColor;
+        case BlendFactor::InvSrcColor: return MTL::BlendFactorOneMinusSourceColor;
+        case BlendFactor::SrcAlpha: return MTL::BlendFactorSourceAlpha;
+        case BlendFactor::InvSrcAlpha: return MTL::BlendFactorOneMinusSourceAlpha;
+        case BlendFactor::DestColor: return MTL::BlendFactorDestinationColor;
+        case BlendFactor::InvDestColor: return MTL::BlendFactorOneMinusDestinationColor;
+        case BlendFactor::DestAlpha: return MTL::BlendFactorDestinationAlpha;
+        case BlendFactor::InvDestAlpha: return MTL::BlendFactorOneMinusDestinationAlpha;
+        case BlendFactor::SrcAlphaSat: return MTL::BlendFactorSourceAlphaSaturated;
+        case BlendFactor::ColorFactor: return MTL::BlendFactorBlendColor;
+        case BlendFactor::InvColorFactor: return MTL::BlendFactorOneMinusBlendColor;
+        case BlendFactor::Src1Color: return MTL::BlendFactorSource1Color;
+        case BlendFactor::InvSrc1Color: return MTL::BlendFactorOneMinusSource1Color;
+        case BlendFactor::Src1Alpha: return MTL::BlendFactorSource1Alpha;
+        case BlendFactor::InvSrc1Alpha: return MTL::BlendFactorOneMinusSource1Alpha;
+        case BlendFactor::AlphaFactor: return MTL::BlendFactorBlendAlpha;
+        case BlendFactor::InvAlphaFactor: return MTL::BlendFactorOneMinusBlendAlpha;
+    }
+    throw std::invalid_argument("Unsupported Metal BlendFactor");
+}
+
+MTL::BlendOperation RM::Metal::ToBlendOperation(BlendOp operation)
+{
+    switch (operation)
+    {
+        case BlendOp::Add: return MTL::BlendOperationAdd;
+        case BlendOp::Subtract: return MTL::BlendOperationSubtract;
+        case BlendOp::RevSubtract: return MTL::BlendOperationReverseSubtract;
+        case BlendOp::Min: return MTL::BlendOperationMin;
+        case BlendOp::Max: return MTL::BlendOperationMax;
+    }
+    throw std::invalid_argument("Unsupported Metal BlendOp");
+}
+
+MTL::StencilOperation RM::Metal::ToStencilOperation(StencilOp operation)
+{
+    switch (operation)
+    {
+        case StencilOp::Keep: return MTL::StencilOperationKeep;
+        case StencilOp::Zero: return MTL::StencilOperationZero;
+        case StencilOp::Replace: return MTL::StencilOperationReplace;
+        case StencilOp::IncreaseSat: return MTL::StencilOperationIncrementClamp;
+        case StencilOp::DecreaseSat: return MTL::StencilOperationDecrementClamp;
+        case StencilOp::Invert: return MTL::StencilOperationInvert;
+        case StencilOp::Increment: return MTL::StencilOperationIncrementWrap;
+        case StencilOp::Decrement: return MTL::StencilOperationDecrementWrap;
+    }
+    throw std::invalid_argument("Unsupported Metal StencilOp");
+}
+
+MTL::PrimitiveTopologyClass RM::Metal::ToPrimitiveTopologyClass(PolygonMode mode)
+{
+    switch (mode)
+    {
+        case PolygonMode::Point: return MTL::PrimitiveTopologyClassPoint;
+        case PolygonMode::Line: return MTL::PrimitiveTopologyClassLine;
+        case PolygonMode::Triangle: return MTL::PrimitiveTopologyClassTriangle;
+    }
+    throw std::invalid_argument("Unsupported Metal PolygonMode");
+}
+
+MTL::CullMode RM::Metal::ToCullMode(CullMode mode)
+{
+    switch (mode)
+    {
+        case CullMode::Back: return MTL::CullModeBack;
+        case CullMode::Front: return MTL::CullModeFront;
+        case CullMode::None: return MTL::CullModeNone;
+    }
+    throw std::invalid_argument("Unsupported Metal CullMode");
+}
+
+MTL::Winding RM::Metal::ToWinding(FrontFace face)
+{
+    switch (face)
+    {
+        case FrontFace::Clockwise: return MTL::WindingClockwise;
+        case FrontFace::CounterClockwise: return MTL::WindingCounterClockwise;
+    }
+    throw std::invalid_argument("Unsupported Metal FrontFace");
+}
+
+MTL::TriangleFillMode RM::Metal::ToTriangleFillMode(FillMode mode)
+{
+    switch (mode)
+    {
+        case FillMode::Wireframe: return MTL::TriangleFillModeLines;
+        case FillMode::Solid: return MTL::TriangleFillModeFill;
+    }
+    throw std::invalid_argument("Unsupported Metal FillMode");
+}
+
+MTL::VertexStepFunction RM::Metal::ToVertexStepFunction(VertexInputRate rate)
+{
+    switch (rate)
+    {
+        case VertexInputRate::Vertex: return MTL::VertexStepFunctionPerVertex;
+        case VertexInputRate::Instance: return MTL::VertexStepFunctionPerInstance;
+    }
+    throw std::invalid_argument("Unsupported Metal VertexInputRate");
+}
+
+MTL::VertexFormat RM::Metal::ToVertexFormat(Format format)
+{
+    switch (format)
+    {
+        case Format::R8_UNorm: return MTL::VertexFormatUCharNormalized;
+        case Format::R8_SNorm: return MTL::VertexFormatCharNormalized;
+        case Format::R8_UInt: return MTL::VertexFormatUChar;
+        case Format::R8_SInt: return MTL::VertexFormatChar;
+        case Format::R16_UNorm: return MTL::VertexFormatUShortNormalized;
+        case Format::R16_SNorm: return MTL::VertexFormatShortNormalized;
+        case Format::R16_UInt: return MTL::VertexFormatUShort;
+        case Format::R16_SInt: return MTL::VertexFormatShort;
+        case Format::R16_Float: return MTL::VertexFormatHalf;
+        case Format::R32_UInt: return MTL::VertexFormatUInt;
+        case Format::R32_SInt: return MTL::VertexFormatInt;
+        case Format::R32_Float: return MTL::VertexFormatFloat;
+        case Format::RG8_UNorm: return MTL::VertexFormatUChar2Normalized;
+        case Format::RG8_SNorm: return MTL::VertexFormatChar2Normalized;
+        case Format::RG8_UInt: return MTL::VertexFormatUChar2;
+        case Format::RG8_SInt: return MTL::VertexFormatChar2;
+        case Format::RG16_UNorm: return MTL::VertexFormatUShort2Normalized;
+        case Format::RG16_SNorm: return MTL::VertexFormatShort2Normalized;
+        case Format::RG16_UInt: return MTL::VertexFormatUShort2;
+        case Format::RG16_SInt: return MTL::VertexFormatShort2;
+        case Format::RG16_Float: return MTL::VertexFormatHalf2;
+        case Format::RG32_UInt: return MTL::VertexFormatUInt2;
+        case Format::RG32_SInt: return MTL::VertexFormatInt2;
+        case Format::RG32_Float: return MTL::VertexFormatFloat2;
+        case Format::RGBA8_UNorm: return MTL::VertexFormatUChar4Normalized;
+        case Format::RGBA8_SNorm: return MTL::VertexFormatChar4Normalized;
+        case Format::RGBA8_UInt: return MTL::VertexFormatUChar4;
+        case Format::RGBA8_SInt: return MTL::VertexFormatChar4;
+        case Format::RGBA16_UNorm: return MTL::VertexFormatUShort4Normalized;
+        case Format::RGBA16_SNorm: return MTL::VertexFormatShort4Normalized;
+        case Format::RGBA16_UInt: return MTL::VertexFormatUShort4;
+        case Format::RGBA16_SInt: return MTL::VertexFormatShort4;
+        case Format::RGBA16_Float: return MTL::VertexFormatHalf4;
+        case Format::RGBA32_UInt: return MTL::VertexFormatUInt4;
+        case Format::RGBA32_SInt: return MTL::VertexFormatInt4;
+        case Format::RGBA32_Float: return MTL::VertexFormatFloat4;
+        case Format::BGRA8_UNorm: return MTL::VertexFormatUChar4Normalized_BGRA;
+        case Format::RGB10A2_UNorm: return MTL::VertexFormatUInt1010102Normalized;
+        case Format::RG11B10_Float: return MTL::VertexFormatFloatRG11B10;
+        case Format::RGB9E5_Float: return MTL::VertexFormatFloatRGB9E5;
+        default: break;
+    }
+    throw std::invalid_argument("Unsupported Metal Format");
+}
+
+NS::SharedPtr<MTL::VertexDescriptor> RM::Metal::CreateVertexDescriptor(
+    const VertexInputState& input, const IRShaderReflection* reflection)
+{
+    if (!reflection) throw std::invalid_argument("Vertex layout requires shader reflection");
+    auto descriptor = NS::TransferPtr(MTL::VertexDescriptor::alloc()->init());
+    // Metal has 31 vertex buffer slots and 31 attributes. The converter reserves
+    // the first kIRVertexBufferBindPoint buffers and kIRStageInAttributeStartIndex attributes.
+    constexpr size_t slot_count = 31;
+    std::array<bool, slot_count> bindings{};
+    for (const auto& binding : input.bindings)
+    {
+        if (binding.binding >= slot_count - kIRVertexBufferBindPoint)
+            throw std::invalid_argument("Vertex buffer binding exceeds Metal's available slots");
+        const auto index = binding.binding + kIRVertexBufferBindPoint;
+        if (bindings[index]) throw std::invalid_argument("Duplicate vertex buffer binding");
+        bindings[index] = true;
+        auto* layout = descriptor->layouts()->object(index);
+        layout->setStride(binding.stride);
+        layout->setStepFunction(ToVertexStepFunction(binding.input_rate));
+        layout->setStepRate(1);
+    }
+
+    const auto semantic_name = [](std::string name)
+    {
+        for (auto& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (!name.empty() && !std::isdigit(static_cast<unsigned char>(name.back()))) name += '0';
+        return name;
+    };
+    std::vector<std::string> semantics;
+    semantics.reserve(input.attributes.size());
+    for (const auto& attribute : input.attributes)
+    {
+        if (attribute.binding >= slot_count - kIRVertexBufferBindPoint ||
+            !bindings[attribute.binding + kIRVertexBufferBindPoint])
+            throw std::invalid_argument("Vertex attribute references a missing binding");
+        ToVertexFormat(attribute.format);
+        if (attribute.semantic.empty() && attribute.location >= slot_count - kIRStageInAttributeStartIndex)
+            throw std::invalid_argument("Vertex attribute location exceeds Metal's available slots");
+        semantics.push_back(semantic_name(attribute.semantic));
+    }
+
+    IRVersionedVSInfo vertex_info{};
+    if (!IRShaderReflectionCopyVertexInfo(reflection, IRReflectionVersion_1_0, &vertex_info))
+        throw std::runtime_error("Failed to obtain vertex shader inputs");
+    const auto release_info = [](IRVersionedVSInfo* info) { IRShaderReflectionReleaseVertexInfo(info); };
+    const std::unique_ptr<IRVersionedVSInfo, decltype(release_info)> guard(&vertex_info, release_info);
+    std::array<bool, slot_count> attributes{};
+    for (size_t i = 0; i < vertex_info.info_1_0.num_vertex_inputs; ++i)
+    {
+        const auto& shader_input = vertex_info.info_1_0.vertex_inputs[i];
+        if (shader_input.attributeIndex >= slot_count - kIRStageInAttributeStartIndex)
+            throw std::invalid_argument("Reflected vertex attribute exceeds Metal's available slots");
+        const auto name = semantic_name(shader_input.name ? shader_input.name : "");
+        const VertexAttribute* match = nullptr;
+        for (size_t j = 0; j < input.attributes.size(); ++j)
+        {
+            const auto& attribute = input.attributes[j];
+            // Named HLSL inputs use their semantic; unnamed attributes use location.
+            if (semantics[j].empty() ? attribute.location == shader_input.attributeIndex : semantics[j] == name)
+            {
+                if (match) throw std::invalid_argument("Duplicate vertex attributes for shader input " + name);
+                match = &attribute;
+            }
+        }
+        if (!match) throw std::invalid_argument("Missing vertex attribute for shader input " + name);
+        const auto index = shader_input.attributeIndex + kIRStageInAttributeStartIndex;
+        if (attributes[index]) throw std::invalid_argument("Duplicate reflected vertex attribute");
+        attributes[index] = true;
+        auto* attribute = descriptor->attributes()->object(index);
+        attribute->setFormat(ToVertexFormat(match->format));
+        attribute->setOffset(match->offset);
+        attribute->setBufferIndex(match->binding + kIRVertexBufferBindPoint);
+    }
+    return descriptor;
+}
 
 MTL::PixelFormat RM::Metal::ToPixelFormat(Format format)
 {
     switch (format)
     {
-        case Format::Invalid:
-            return MTL::PixelFormatInvalid;
         case Format::A8_UNorm:
             return MTL::PixelFormatA8Unorm;
         case Format::R8_UNorm:
@@ -158,8 +508,186 @@ MTL::PixelFormat RM::Metal::ToPixelFormat(Format format)
             return MTL::PixelFormatDepth24Unorm_Stencil8;
         case Format::Depth32_Float_Stencil8:
             return MTL::PixelFormatDepth32Float_Stencil8;
+        case Format::Unknown:
+            return MTL::PixelFormatInvalid;
     }
     return MTL::PixelFormatInvalid;
+}
+
+RM::Format RM::Metal::FromPixelFormat(MTL::PixelFormat format)
+{
+    switch (format)
+    {
+        case MTL::PixelFormatInvalid:
+            return Format::Unknown;
+        case MTL::PixelFormatA8Unorm:
+            return Format::A8_UNorm;
+        case MTL::PixelFormatR8Unorm:
+            return Format::R8_UNorm;
+        case MTL::PixelFormatR8Unorm_sRGB:
+            return Format::R8_UNorm_sRGB;
+        case MTL::PixelFormatR8Snorm:
+            return Format::R8_SNorm;
+        case MTL::PixelFormatR8Uint:
+            return Format::R8_UInt;
+        case MTL::PixelFormatR8Sint:
+            return Format::R8_SInt;
+        case MTL::PixelFormatR16Unorm:
+            return Format::R16_UNorm;
+        case MTL::PixelFormatR16Snorm:
+            return Format::R16_SNorm;
+        case MTL::PixelFormatR16Uint:
+            return Format::R16_UInt;
+        case MTL::PixelFormatR16Sint:
+            return Format::R16_SInt;
+        case MTL::PixelFormatR16Float:
+            return Format::R16_Float;
+        case MTL::PixelFormatRG8Unorm:
+            return Format::RG8_UNorm;
+        case MTL::PixelFormatRG8Unorm_sRGB:
+            return Format::RG8_UNorm_sRGB;
+        case MTL::PixelFormatRG8Snorm:
+            return Format::RG8_SNorm;
+        case MTL::PixelFormatRG8Uint:
+            return Format::RG8_UInt;
+        case MTL::PixelFormatRG8Sint:
+            return Format::RG8_SInt;
+        case MTL::PixelFormatB5G6R5Unorm:
+            return Format::B5G6R5_UNorm;
+        case MTL::PixelFormatA1BGR5Unorm:
+            return Format::A1BGR5_UNorm;
+        case MTL::PixelFormatABGR4Unorm:
+            return Format::ABGR4_UNorm;
+        case MTL::PixelFormatBGR5A1Unorm:
+            return Format::BGR5A1_UNorm;
+        case MTL::PixelFormatR32Uint:
+            return Format::R32_UInt;
+        case MTL::PixelFormatR32Sint:
+            return Format::R32_SInt;
+        case MTL::PixelFormatR32Float:
+            return Format::R32_Float;
+        case MTL::PixelFormatRG16Unorm:
+            return Format::RG16_UNorm;
+        case MTL::PixelFormatRG16Snorm:
+            return Format::RG16_SNorm;
+        case MTL::PixelFormatRG16Uint:
+            return Format::RG16_UInt;
+        case MTL::PixelFormatRG16Sint:
+            return Format::RG16_SInt;
+        case MTL::PixelFormatRG16Float:
+            return Format::RG16_Float;
+        case MTL::PixelFormatRGBA8Unorm:
+            return Format::RGBA8_UNorm;
+        case MTL::PixelFormatRGBA8Unorm_sRGB:
+            return Format::RGBA8_UNorm_sRGB;
+        case MTL::PixelFormatRGBA8Snorm:
+            return Format::RGBA8_SNorm;
+        case MTL::PixelFormatRGBA8Uint:
+            return Format::RGBA8_UInt;
+        case MTL::PixelFormatRGBA8Sint:
+            return Format::RGBA8_SInt;
+        case MTL::PixelFormatBGRA8Unorm:
+            return Format::BGRA8_UNorm;
+        case MTL::PixelFormatBGRA8Unorm_sRGB:
+            return Format::BGRA8_UNorm_sRGB;
+        case MTL::PixelFormatRGB10A2Unorm:
+            return Format::RGB10A2_UNorm;
+        case MTL::PixelFormatRGB10A2Uint:
+            return Format::RGB10A2_UInt;
+        case MTL::PixelFormatRG11B10Float:
+            return Format::RG11B10_Float;
+        case MTL::PixelFormatRGB9E5Float:
+            return Format::RGB9E5_Float;
+        case MTL::PixelFormatBGR10A2Unorm:
+            return Format::BGR10A2_UNorm;
+        case MTL::PixelFormatBGR10_XR:
+            return Format::BGR10_XR;
+        case MTL::PixelFormatBGR10_XR_sRGB:
+            return Format::BGR10_XR_sRGB;
+        case MTL::PixelFormatBGRA10_XR:
+            return Format::BGRA10_XR;
+        case MTL::PixelFormatBGRA10_XR_sRGB:
+            return Format::BGRA10_XR_sRGB;
+        case MTL::PixelFormatRG32Uint:
+            return Format::RG32_UInt;
+        case MTL::PixelFormatRG32Sint:
+            return Format::RG32_SInt;
+        case MTL::PixelFormatRG32Float:
+            return Format::RG32_Float;
+        case MTL::PixelFormatRGBA16Unorm:
+            return Format::RGBA16_UNorm;
+        case MTL::PixelFormatRGBA16Snorm:
+            return Format::RGBA16_SNorm;
+        case MTL::PixelFormatRGBA16Uint:
+            return Format::RGBA16_UInt;
+        case MTL::PixelFormatRGBA16Sint:
+            return Format::RGBA16_SInt;
+        case MTL::PixelFormatRGBA16Float:
+            return Format::RGBA16_Float;
+        case MTL::PixelFormatRGBA32Uint:
+            return Format::RGBA32_UInt;
+        case MTL::PixelFormatRGBA32Sint:
+            return Format::RGBA32_SInt;
+        case MTL::PixelFormatRGBA32Float:
+            return Format::RGBA32_Float;
+        case MTL::PixelFormatBC1_RGBA:
+            return Format::BC1_RGBA_UNorm;
+        case MTL::PixelFormatBC1_RGBA_sRGB:
+            return Format::BC1_RGBA_UNorm_sRGB;
+        case MTL::PixelFormatBC2_RGBA:
+            return Format::BC2_RGBA_UNorm;
+        case MTL::PixelFormatBC2_RGBA_sRGB:
+            return Format::BC2_RGBA_UNorm_sRGB;
+        case MTL::PixelFormatBC3_RGBA:
+            return Format::BC3_RGBA_UNorm;
+        case MTL::PixelFormatBC3_RGBA_sRGB:
+            return Format::BC3_RGBA_UNorm_sRGB;
+        case MTL::PixelFormatBC4_RUnorm:
+            return Format::BC4_R_UNorm;
+        case MTL::PixelFormatBC4_RSnorm:
+            return Format::BC4_R_SNorm;
+        case MTL::PixelFormatBC5_RGUnorm:
+            return Format::BC5_RG_UNorm;
+        case MTL::PixelFormatBC5_RGSnorm:
+            return Format::BC5_RG_SNorm;
+        case MTL::PixelFormatBC6H_RGBFloat:
+            return Format::BC6H_RGB_Float;
+        case MTL::PixelFormatBC6H_RGBUfloat:
+            return Format::BC6H_RGB_UFloat;
+        case MTL::PixelFormatBC7_RGBAUnorm:
+            return Format::BC7_RGBA_UNorm;
+        case MTL::PixelFormatBC7_RGBAUnorm_sRGB:
+            return Format::BC7_RGBA_UNorm_sRGB;
+        case MTL::PixelFormatDepth16Unorm:
+            return Format::Depth16_UNorm;
+        case MTL::PixelFormatDepth32Float:
+            return Format::Depth32_Float;
+        case MTL::PixelFormatStencil8:
+            return Format::Stencil8;
+        case MTL::PixelFormatDepth24Unorm_Stencil8:
+            return Format::Depth24_UNorm_Stencil8;
+        case MTL::PixelFormatDepth32Float_Stencil8:
+            return Format::Depth32_Float_Stencil8;
+        default:
+            return Format::Unknown;
+    }
+}
+
+MTL::PrimitiveType RM::Metal::ToPrimitiveType(RM::PrimitiveTopology topology)
+{
+    switch (topology) {
+        case PrimitiveTopology::PointList:
+            return MTL::PrimitiveTypePoint;
+        case PrimitiveTopology::LineList:
+            return MTL::PrimitiveTypeLine;
+        case PrimitiveTopology::LineStrip:
+            return MTL::PrimitiveTypeLineStrip;
+        case PrimitiveTopology::TriangleList:
+            return MTL::PrimitiveTypeTriangle;
+        case PrimitiveTopology::TriangleStrip:
+            return MTL::PrimitiveTypeTriangleStrip;
+    }
+    return MTL::PrimitiveTypeTriangle;
 }
 
 MTL::TextureUsage RM::Metal::ToTextureUsage(EnumFlags<TextureUsage> flags)
@@ -172,6 +700,108 @@ MTL::TextureUsage RM::Metal::ToTextureUsage(EnumFlags<TextureUsage> flags)
     if (flags.contains(TextureUsage::RenderTarget))
         usage |= MTL::TextureUsageRenderTarget;
     return usage;
+}
+
+MTL::SamplerMinMagFilter RM::Metal::ToSamplerMinMagFilter(Filter filter)
+{
+    switch (filter)
+    {
+        case Filter::Nearest:
+        case Filter::NearestMipNearest:
+        case Filter::NearestMipLinear:
+            return MTL::SamplerMinMagFilterNearest;
+        case Filter::Linear:
+        case Filter::LinearMipNearest:
+        case Filter::LinearMipLinear:
+            return MTL::SamplerMinMagFilterLinear;
+    }
+    return MTL::SamplerMinMagFilterLinear;
+}
+
+MTL::SamplerMipFilter RM::Metal::ToSamplerMipFilter(Filter filter)
+{
+    switch (filter)
+    {
+        case Filter::Nearest:
+        case Filter::Linear:
+            return MTL::SamplerMipFilterNotMipmapped;
+        case Filter::NearestMipNearest:
+        case Filter::LinearMipNearest:
+            return MTL::SamplerMipFilterNearest;
+        case Filter::NearestMipLinear:
+        case Filter::LinearMipLinear:
+            return MTL::SamplerMipFilterLinear;
+    }
+    return MTL::SamplerMipFilterNotMipmapped;
+}
+
+MTL::SamplerAddressMode RM::Metal::ToSamplerAddressMode(Wrap wrap)
+{
+    switch (wrap)
+    {
+        case Wrap::Repeat:
+            return MTL::SamplerAddressModeRepeat;
+        case Wrap::MirroredRepeat:
+            return MTL::SamplerAddressModeMirrorRepeat;
+        case Wrap::ClampToEdge:
+            return MTL::SamplerAddressModeClampToEdge;
+        case Wrap::Border:
+            return MTL::SamplerAddressModeClampToBorderColor;
+    }
+    return MTL::SamplerAddressModeRepeat;
+}
+
+MTL::SamplerBorderColor RM::Metal::ToSamplerBorderColor(BorderColor color)
+{
+    switch (color)
+    {
+        case BorderColor::Black:
+            return MTL::SamplerBorderColorOpaqueBlack;
+        case BorderColor::White:
+            return MTL::SamplerBorderColorOpaqueWhite;
+        case BorderColor::TransparentBlack:
+            return MTL::SamplerBorderColorTransparentBlack;
+    }
+    return MTL::SamplerBorderColorOpaqueBlack;
+}
+
+MTL::CompareFunction RM::Metal::ToCompareFunction(ComparisonFunc function)
+{
+    switch (function)
+    {
+        case ComparisonFunc::Always:
+            return MTL::CompareFunctionAlways;
+        case ComparisonFunc::Never:
+            return MTL::CompareFunctionNever;
+        case ComparisonFunc::Less:
+            return MTL::CompareFunctionLess;
+        case ComparisonFunc::LessEqual:
+            return MTL::CompareFunctionLessEqual;
+        case ComparisonFunc::Greater:
+            return MTL::CompareFunctionGreater;
+        case ComparisonFunc::GreaterEqual:
+            return MTL::CompareFunctionGreaterEqual;
+        case ComparisonFunc::Equal:
+            return MTL::CompareFunctionEqual;
+        case ComparisonFunc::NotEqual:
+            return MTL::CompareFunctionNotEqual;
+    }
+    return MTL::CompareFunctionNever;
+}
+
+MTL::SamplerReductionMode RM::Metal::ToSamplerReductionMode(ReductionType type)
+{
+    switch (type)
+    {
+        case ReductionType::Standard:
+        case ReductionType::Comparison:
+            return MTL::SamplerReductionModeWeightedAverage;
+        case ReductionType::Minimum:
+            return MTL::SamplerReductionModeMinimum;
+        case ReductionType::Maximum:
+            return MTL::SamplerReductionModeMaximum;
+    }
+    return MTL::SamplerReductionModeWeightedAverage;
 }
 
 bool RM::Metal::SupportsHDR(void* window)
@@ -195,4 +825,23 @@ NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Devi
     swap_layer->setFramebufferOnly(false);
     swap_layer->setDrawableSize(CGSizeMake((float)info.width, (float)info.height));
     return swap_layer;
+}
+
+MTL::Stages RM::Metal::ToBarrierStages(RM::BarrierStage stages)
+{
+    const RM::EnumFlags flags(stages);
+    MTL::Stages result = 0;
+    if (flags.intersects(RM::BarrierStage::VertexShading)) result |= MTL::StageVertex;
+    if (flags.intersects(RM::BarrierStage::PixelShading) ||
+        flags.intersects(RM::BarrierStage::RenderTarget) ||
+        flags.intersects(RM::BarrierStage::DepthStencil))
+        result |= MTL::StageFragment;
+    if (flags.intersects(RM::BarrierStage::ComputeShading)) result |= MTL::StageDispatch;
+    if (flags.intersects(RM::BarrierStage::Copy)) result |= MTL::StageBlit;
+    if (flags.intersects(RM::BarrierStage::AmplificationShading)) result |= MTL::StageObject;
+    if (flags.intersects(RM::BarrierStage::MeshShading)) result |= MTL::StageMesh;
+    if (flags.intersects(RM::BarrierStage::AccelerationStructureBuild) ||
+        flags.intersects(RM::BarrierStage::AccelerationStructureCopy))
+        result |= MTL::StageAccelerationStructure;
+    return result;
 }
