@@ -7,7 +7,17 @@ endif ()
 
 set(CMAKE_CXX_STANDARD 23)
 
+function(rimera_disable_exceptions target)
+    if (MSVC)
+        target_compile_options(${target} PRIVATE /EHs-c-)
+        target_compile_definitions(${target} PRIVATE _HAS_EXCEPTIONS=0)
+    else ()
+        target_compile_options(${target} PRIVATE -fno-exceptions)
+    endif ()
+endfunction()
+
 add_library(Rimera STATIC
+        inc/rimera_result.hpp
         inc/rimera_as.hpp
         inc/rimera_buffer.hpp
         inc/rimera_command.hpp
@@ -20,10 +30,14 @@ add_library(Rimera STATIC
         inc/rimera_structs.hpp
         inc/rimera_texture.hpp
         src/rimera_helpers.cpp
+        src/rimera_texture.cpp
         inc/rimera_builders.hpp
         inc/rimera_sampler.hpp
-        inc/rimera_texture_view.hpp
 )
+rimera_disable_exceptions(Rimera)
+target_compile_definitions(Rimera PUBLIC
+        $<$<CONFIG:Debug>:RIMERA_DEBUG>
+        $<$<NOT:$<CONFIG:Debug>>:RIMERA_RELEASE>)
 target_include_directories(Rimera PUBLIC inc)
 target_precompile_headers(Rimera PUBLIC ${CMAKE_SOURCE_DIR}/src/rimera_pch.hpp)
 
@@ -43,8 +57,7 @@ if (APPLE)
             src/metal/rimera_buffer.cpp
             src/metal/rimera_as.cpp
             src/metal/rimera_sampler.cpp
-            src/metal/rimera_texture_view.cpp
-   )
+    )
 elseif (WIN32)
     target_compile_definitions(Rimera PUBLIC RIMERA_WINDOWS)
 
@@ -60,13 +73,10 @@ elseif (WIN32)
             src/d3d12/rimera_as.cpp
             src/d3d12/rimera_d3d12.hpp
             src/d3d12/rimera_sampler.cpp
-            src/d3d12/rimera_d3d12.cpp
-            src/d3d12/rimera_texture_view.cpp)
+            src/d3d12/rimera_d3d12.cpp)
 endif ()
 
 include(FetchContent)
 
 add_subdirectory(external)
-enable_testing()
 add_subdirectory(examples)
-

@@ -3,16 +3,20 @@
 #include "rimera_buffer.hpp"
 #include "rimera_device.hpp"
 
-RM::BLAS::BLAS(Device* device, const BLASCreateInfo& info)
+RM::Result<void> RM::BLAS::Initialize(Device* device, const BLASCreateInfo& info)
 {
     auto prim_desc = NS::TransferPtr(MTL4::PrimitiveAccelerationStructureDescriptor::alloc()->init());
-    std::vector<MTL4::AccelerationStructureTriangleGeometryDescriptor*> geom_descs(info.infos.size());
+    std::vector<NS::SharedPtr<MTL4::AccelerationStructureTriangleGeometryDescriptor>> geom_descs(
+        info.infos.size());
+    std::vector<NS::Object*> geometry_objects(info.infos.size());
     for (int i = 0; i < info.infos.size(); i++)
     {
         auto& geom_info = info.infos[i];
         auto* vertex_buffer = geom_info.vertex_buffer;
         auto* index_buffer = geom_info.index_buffer;
-        geom_descs[i] = MTL4::AccelerationStructureTriangleGeometryDescriptor::alloc()->init();
+        geom_descs[i] =
+            NS::TransferPtr(MTL4::AccelerationStructureTriangleGeometryDescriptor::alloc()->init());
+        geometry_objects[i] = geom_descs[i].get();
         geom_descs[i]->setVertexBuffer(MTL4::BufferRange(vertex_buffer->GetGPUAddress(), vertex_buffer->GetLength()));
         geom_descs[i]->setVertexFormat(MTL::AttributeFormatFloat3); // Handle different vertex formats later
         geom_descs[i]->setVertexStride(geom_info.vertex_stride);
@@ -20,7 +24,7 @@ RM::BLAS::BLAS(Device* device, const BLASCreateInfo& info)
         geom_descs[i]->setIndexType(MTL::IndexTypeUInt32);
         geom_descs[i]->setTriangleCount(geom_info.triangle_count);
 
-        NS::Array* geom_descs_arr = NS::Array::array(reinterpret_cast<NS::Object**>(geom_descs.data()), geom_descs.size());
+        NS::Array* geom_descs_arr = NS::Array::array(geometry_objects.data(), geom_descs.size());
         prim_desc->setGeometryDescriptors(geom_descs_arr);
     }
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
@@ -29,25 +33,30 @@ RM::BLAS::BLAS(Device* device, const BLASCreateInfo& info)
     const auto sizes = native_device->accelerationStructureSizes(prim_desc.get());
     const auto scratch_buffer =
         NS::TransferPtr(native_device->newBuffer(sizes.buildScratchBufferSize, MTL::ResourceStorageModeShared));
-    
-    auto* command = device->CreateCommand(CommandType::Compute);
+
+    auto result_command = device->CreateCommand(CommandType::Compute);
+    if (!result_command) return std::unexpected(result_command.error());
+    auto* command = std::move(*result_command);
     auto* native_command = static_cast<MTL4::CommandBuffer*>(command->GetNativeCommand());
     
     auto* compute_encoder = native_command->computeCommandEncoder();
     compute_encoder->buildAccelerationStructure(m_blas.get(), prim_desc.get(), MTL4::BufferRange(scratch_buffer->gpuAddress()));
     compute_encoder->endEncoding();
-    
-    auto* queue = device->CreateQueue(QueueType::Compute);
+
+    auto result_queue = device->CreateQueue(QueueType::Compute);
+    if (!result_queue)
+    {
+        device->DestroyCommand(command);
+        return std::unexpected(result_queue.error());
+    }
+    auto* queue = std::move(*result_queue);
     queue->Submit(command);
-    queue->WaitIdle();
-    
+    auto idle = queue->WaitIdle();
+
     device->DestroyQueue(queue);
     device->DestroyCommand(command);
-    
-    for (int i = 0; i < info.infos.size(); i++)
-    {
-        geom_descs[i]->release();
-    }
+    if (!idle) return std::unexpected(idle.error());
+    return {};
 }
 
 void* RM::BLAS::GetNativeHandle() const
@@ -68,7 +77,7 @@ static MTL::PackedFloat4x3 ToMetalTransform(const RM::Float4x4& m)
                                MTL::PackedFloat3(m[3][0], m[3][1], m[3][2]));
 }
 
-RM::TLAS::TLAS(Device* device, const TLASCreateInfo& info)
+RM::Result<void> RM::TLAS::Initialize(Device* device, const TLASCreateInfo& info)
 {
     const auto instance_desc = NS::TransferPtr(MTL4::InstanceAccelerationStructureDescriptor::alloc()->init());
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
@@ -99,17 +108,27 @@ RM::TLAS::TLAS(Device* device, const TLASCreateInfo& info)
     instance_desc->setInstanceDescriptorBuffer(MTL4::BufferRange(m_data_buffer->gpuAddress(), scratch_offset));
     m_tlas = NS::TransferPtr(native_device->newAccelerationStructure(instance_desc.get()));
 
-    const auto* command = device->CreateCommand(CommandType::Compute);
-    
+    auto result_command = device->CreateCommand(CommandType::Compute);
+    if (!result_command) return std::unexpected(result_command.error());
+    const auto* command = std::move(*result_command);
+
     auto* native_command = static_cast<MTL4::CommandBuffer*>(command->GetNativeCommand());
     
     auto* compute_encoder = native_command->computeCommandEncoder();
     compute_encoder->buildAccelerationStructure(m_tlas.get(), instance_desc.get(), MTL4::BufferRange(m_data_buffer->gpuAddress() + scratch_offset, sizes.buildScratchBufferSize));
     compute_encoder->endEncoding();
-    
-    auto* queue = device->CreateQueue(QueueType::Compute);
+
+    auto result_queue = device->CreateQueue(QueueType::Compute);
+    if (!result_queue)
+    {
+        device->DestroyCommand(command);
+        return std::unexpected(result_queue.error());
+    }
+    auto* queue = std::move(*result_queue);
     queue->Submit(command);
-    queue->WaitIdle();
-    
+    auto idle = queue->WaitIdle();
     device->DestroyCommand(command);
+    device->DestroyQueue(queue);
+    if (!idle) return std::unexpected(idle.error());
+    return {};
 }

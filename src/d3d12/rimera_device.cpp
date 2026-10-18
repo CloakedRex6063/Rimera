@@ -50,13 +50,21 @@ static std::string HResultMessage(const HRESULT hr)
     return message;
 }
 
+RM::Result<RM::Device*> RM::CreateDevice(const DeviceCreateInfo& info)
+{
+    return Device::CreateObject<Device>(info);
+}
+
 void RM::DestroyDevice(const Device* device)
 {
     delete device;
 }
 
-RM::Device::Device(const DeviceCreateInfo& info)
+RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 {
+    if (!info.window || !info.width || !info.height || !info.resource_descriptor_count ||
+        !info.sampler_descriptor_count)
+        return std::unexpected("Invalid device creation parameters");
 #ifdef _DEBUG
     ComPtr<ID3D12Debug> debug;
     if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
@@ -64,10 +72,12 @@ RM::Device::Device(const DeviceCreateInfo& info)
         debug->EnableDebugLayer();
     }
 #endif
-    CreateDXGIFactory(IID_PPV_ARGS(&m_factory));
-    m_factory->EnumAdapterByGpuPreference(0,
-                                          DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                                          IID_PPV_ARGS(m_adapter.GetAddressOf()));
+    if (FAILED(CreateDXGIFactory(IID_PPV_ARGS(&m_factory))))
+        return std::unexpected("Failed to create DXGI factory");
+    if (FAILED(m_factory->EnumAdapterByGpuPreference(0,
+                                                     DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                                                     IID_PPV_ARGS(m_adapter.GetAddressOf()))))
+        return std::unexpected("Failed to select adapter");
     ComPtr<ID3D12Device> device;
     auto result = D3D12CreateDevice(m_adapter.Get(),
                                     D3D_FEATURE_LEVEL_12_2,
@@ -76,10 +86,11 @@ RM::Device::Device(const DeviceCreateInfo& info)
     if (FAILED(result))
     {
         std::cout << std::string(HResultMessage(result)) << std::endl;
-        throw std::runtime_error(
-            "Failed to create D3D12 device, " + std::string(HResultMessage(result)));
+        return std::unexpected("Failed to create D3D12 device, " +
+                               std::string(HResultMessage(result)));
     }
-    device.As(&m_device);
+    if (FAILED(device.As(&m_device)))
+        return std::unexpected("Required D3D12 device interface is unavailable");
 
 #ifdef _DEBUG
     if (SUCCEEDED(m_device.As(&m_info_queue)))
@@ -92,7 +103,9 @@ RM::Device::Device(const DeviceCreateInfo& info)
     }
 #endif
 
-    m_graphics_queue = CreateQueue(QueueType::Graphics);
+    auto graphics_queue_result = CreateQueue(QueueType::Graphics);
+    if (!graphics_queue_result) return std::unexpected(graphics_queue_result.error());
+    m_graphics_queue = std::move(*graphics_queue_result);
 
     DXGI_SWAP_CHAIN_DESC1 swapchain_desc = {
         .Width = info.width,
@@ -123,54 +136,67 @@ RM::Device::Device(const DeviceCreateInfo& info)
     {
         std::cout << "Failed to create swapchain, " + std::string(HResultMessage(result)) <<
             '\n';
-        throw std::runtime_error(
-            "Failed to create swapchain, " + std::string(HResultMessage(result)));
+        return std::unexpected("Failed to create swapchain, " +
+                               std::string(HResultMessage(result)));
     }
-    swapchain.As(&m_swapchain);
+    if (FAILED(swapchain.As(&m_swapchain)))
+        return std::unexpected("Failed to obtain swapchain interface");
     D3D12MA::ALLOCATOR_DESC alloc_desc{
         .Flags = D3D12MA::ALLOCATOR_FLAG_SINGLETHREADED,
         .pDevice = m_device.Get(),
         .pAdapter = m_adapter.Get(),
     };
-    D3D12MA::CreateAllocator(&alloc_desc, &m_allocator);
+    if (FAILED(D3D12MA::CreateAllocator(&alloc_desc, &m_allocator)))
+        return std::unexpected("Failed to create memory allocator");
 
-    m_rtv_heap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 64);
-    m_dsv_heap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64);
-    m_srv_heap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV, 8192);
-    m_sampler_heap = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, 64);
+    auto rtv_heap_result = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 64);
+    if (!rtv_heap_result) return std::unexpected(rtv_heap_result.error());
+    m_rtv_heap = std::move(*rtv_heap_result);
+    auto dsv_heap_result = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_DSV, 64);
+    if (!dsv_heap_result) return std::unexpected(dsv_heap_result.error());
+    m_dsv_heap = std::move(*dsv_heap_result);
+    auto srv_heap_result = CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+                                                info.resource_descriptor_count);
+    if (!srv_heap_result) return std::unexpected(srv_heap_result.error());
+    m_srv_heap = std::move(*srv_heap_result);
+    auto sampler_heap_result =
+        CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER, info.sampler_descriptor_count);
+    if (!sampler_heap_result) return std::unexpected(sampler_heap_result.error());
+    m_sampler_heap = std::move(*sampler_heap_result);
 
-    m_core_residency_set = CreateResidencySet();
+    auto core_residency_set_result = CreateResidencySet();
+    if (!core_residency_set_result) return std::unexpected(core_residency_set_result.error());
+    m_core_residency_set = std::move(*core_residency_set_result);
     for (int i = 0; i < 3; i++)
     {
         ID3D12Resource* swapchain_texture = nullptr;
-        m_swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchain_texture));
-        m_frame_datas[i].swapchain_texture = new Texture(this,
-                                                         swapchain_texture,
-                                                         TextureUsage::RenderTarget);
-        m_frame_datas[i].swapchain_rtv = CreateTextureView({
-            .texture = m_frame_datas[i].swapchain_texture,
-            .view_type = TextureViewType::RenderTarget,
-        });
+        if (FAILED(m_swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchain_texture))))
+            return std::unexpected("Failed to get swapchain buffer");
+        auto texture = CreateObject<Texture>(this, swapchain_texture, TextureUsage::RenderTarget);
+        swapchain_texture->Release();
+        if (!texture) return std::unexpected(texture.error());
+        m_frame_datas[i].swapchain_texture = *texture;
         m_frame_datas[i].fence_value = 0;
-        m_frame_datas[i].swapchain_fence = CreateFence();
+        auto fence_result = CreateFence();
+        if (!fence_result) return std::unexpected(fence_result.error());
+        m_frame_datas[i].swapchain_fence = std::move(*fence_result);
         m_core_residency_set->AddAllocation(m_frame_datas[i].swapchain_texture);
     }
 
-    CreateRootSignature();
+    if (auto result = CreateRootSignature(); !result) return std::unexpected(result.error());
+    return {};
 }
 
 RM::Device::~Device()
 {
-    m_core_residency_set->RemoveAllAllocations();
+    if (m_graphics_queue) static_cast<void>(m_graphics_queue->WaitIdle());
+    if (m_core_residency_set) m_core_residency_set->RemoveAllAllocations();
     for (int i = 0; i < 3; i++)
     {
         DestroyTexture(m_frame_datas[i].swapchain_texture);
-        DestroyTextureView(m_frame_datas[i].swapchain_rtv);
         DestroyFence(m_frame_datas[i].swapchain_fence);
     }
     DestroyResidencySet(m_core_residency_set);
-
-    m_graphics_queue->WaitIdle();
     DestroyQueue(m_graphics_queue);
 
     if (m_callback_registered)
@@ -179,19 +205,16 @@ RM::Device::~Device()
     }
 }
 
-RM::Fence* RM::Device::CreateFence()
-{
-    return new Fence(this);
-}
+RM::Result<RM::Fence*> RM::Device::CreateFence() { return CreateObject<Fence>(this); }
 
 void RM::Device::DestroyFence(const Fence* fence)
 {
     delete fence;
 }
 
-RM::Queue* RM::Device::CreateQueue(QueueType type)
+RM::Result<RM::Queue*> RM::Device::CreateQueue(QueueType type)
 {
-    return new Queue(this, type);
+    return CreateObject<Queue>(this, type);
 }
 
 void RM::Device::DestroyQueue(const Queue* queue)
@@ -199,9 +222,9 @@ void RM::Device::DestroyQueue(const Queue* queue)
     delete queue;
 }
 
-RM::Command* RM::Device::CreateCommand(CommandType type)
+RM::Result<RM::Command*> RM::Device::CreateCommand(CommandType type)
 {
-    return new Command(this, type);
+    return CreateObject<Command>(this, type);
 }
 
 void RM::Device::DestroyCommand(const Command* command) const
@@ -209,9 +232,9 @@ void RM::Device::DestroyCommand(const Command* command) const
     delete command;
 }
 
-RM::CommandRing* RM::Device::CreateCommandRing(QueueType type)
+RM::Result<RM::CommandRing*> RM::Device::CreateCommandRing(QueueType type)
 {
-    return new CommandRing(this, type);
+    return CreateObject<CommandRing>(this, type);
 }
 
 void RM::Device::DestroyCommandRing(const CommandRing* command_ring) const
@@ -219,9 +242,9 @@ void RM::Device::DestroyCommandRing(const CommandRing* command_ring) const
     delete command_ring;
 }
 
-RM::ResidencySet* RM::Device::CreateResidencySet()
+RM::Result<RM::ResidencySet*> RM::Device::CreateResidencySet()
 {
-    return new ResidencySet(this);
+    return CreateObject<ResidencySet>(this);
 }
 
 void RM::Device::DestroyResidencySet(const ResidencySet* residency_set) const
@@ -229,14 +252,14 @@ void RM::Device::DestroyResidencySet(const ResidencySet* residency_set) const
     delete residency_set;
 }
 
-RM::Pipeline* RM::Device::CreatePipeline(const ComputePipelineCreateInfo& info)
+RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const ComputePipelineCreateInfo& info)
 {
-    return new Pipeline(this, info);
+    return CreateObject<Pipeline>(this, info);
 }
 
-RM::Pipeline* RM::Device::CreatePipeline(const GraphicsPipelineCreateInfo& info)
+RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const GraphicsPipelineCreateInfo& info)
 {
-    return new Pipeline(this, info);
+    return CreateObject<Pipeline>(this, info);
 }
 
 void RM::Device::DestroyPipeline(const Pipeline* pipeline)
@@ -244,9 +267,9 @@ void RM::Device::DestroyPipeline(const Pipeline* pipeline)
     delete pipeline;
 }
 
-RM::Texture* RM::Device::CreateTexture(const TextureCreateInfo& info)
+RM::Result<RM::Texture*> RM::Device::CreateTexture(const TextureCreateInfo& info)
 {
-    return new Texture(this, info);
+    return CreateObject<Texture>(this, info);
 }
 
 void RM::Device::DestroyTexture(const Texture* texture) const
@@ -254,19 +277,14 @@ void RM::Device::DestroyTexture(const Texture* texture) const
     delete texture;
 }
 
-RM::TextureView* RM::Device::CreateTextureView(const TextureViewCreateInfo& info)
+RM::Result<RM::Texture*> RM::Device::CreateTextureView(const TextureViewCreateInfo& info)
 {
-    return new TextureView(this, info);
+    return CreateObject<Texture>(this, info);
 }
 
-void RM::Device::DestroyTextureView(const TextureView* texture_view) const
+RM::Result<RM::Buffer*> RM::Device::CreateBuffer(const BufferCreateInfo& info)
 {
-    delete texture_view;
-}
-
-RM::Buffer* RM::Device::CreateBuffer(const BufferCreateInfo& info)
-{
-    return new Buffer(this, info);
+    return CreateObject<Buffer>(this, info);
 }
 
 void RM::Device::DestroyBuffer(const Buffer* buffer)
@@ -274,9 +292,9 @@ void RM::Device::DestroyBuffer(const Buffer* buffer)
     delete buffer;
 }
 
-RM::Sampler* RM::Device::CreateSampler(const SamplerCreateInfo& info)
+RM::Result<RM::Sampler*> RM::Device::CreateSampler(const SamplerCreateInfo& info)
 {
-    return new Sampler(this, info);
+    return CreateObject<Sampler>(this, info);
 }
 
 void RM::Device::DestroySampler(const Sampler* sampler)
@@ -284,7 +302,7 @@ void RM::Device::DestroySampler(const Sampler* sampler)
     delete sampler;
 }
 
-uint32_t RM::Device::AddDescriptor(const Buffer* buffer)
+RM::Result<uint32_t> RM::Device::AddDescriptor(const Buffer* buffer)
 {
     uint32_t index;
     if (!m_srv_heap.free_descriptors.empty())
@@ -294,6 +312,8 @@ uint32_t RM::Device::AddDescriptor(const Buffer* buffer)
     }
     else
     {
+        if (m_srv_heap.index >= m_srv_heap.heap->GetDesc().NumDescriptors)
+            return std::unexpected("Descriptor heap is full");
         index = m_srv_heap.index++;
     }
     auto cpu_handle = m_srv_heap.cpu_base;
@@ -314,7 +334,7 @@ uint32_t RM::Device::AddDescriptor(const Buffer* buffer)
     return index;
 }
 
-uint32_t RM::Device::AddDescriptor(TextureViewType view_type)
+RM::Result<uint32_t> RM::Device::AddDescriptor(TextureViewType view_type)
 {
     DescriptorHeap* heap = nullptr;
     switch (view_type)
@@ -330,6 +350,7 @@ uint32_t RM::Device::AddDescriptor(TextureViewType view_type)
             heap = &m_srv_heap;
             break;
     }
+    if (!heap) return std::unexpected("Invalid descriptor type");
     uint32_t index;
     if (!heap->free_descriptors.empty())
     {
@@ -338,13 +359,15 @@ uint32_t RM::Device::AddDescriptor(TextureViewType view_type)
     }
     else
     {
+        if (heap->index >= heap->heap->GetDesc().NumDescriptors)
+            return std::unexpected("Descriptor heap is full");
         index = heap->index++;
     }
 
     return index;
 }
 
-uint32_t RM::Device::AddDescriptor(Sampler* sampler)
+RM::Result<uint32_t> RM::Device::AddDescriptor(Sampler* sampler)
 {
     uint32_t index;
     if (!m_sampler_heap.free_descriptors.empty())
@@ -354,6 +377,8 @@ uint32_t RM::Device::AddDescriptor(Sampler* sampler)
     }
     else
     {
+        if (m_sampler_heap.index >= m_sampler_heap.heap->GetDesc().NumDescriptors)
+            return std::unexpected("Descriptor heap is full");
         index = m_sampler_heap.index++;
     }
     sampler->m_cpu_handle.ptr = m_sampler_heap.cpu_base.ptr + index * m_sampler_heap.stride;
@@ -366,23 +391,28 @@ void RM::Device::RemoveDescriptor(const Buffer* buffer)
     m_srv_heap.free_descriptors.push_back(buffer->GetResourceIndex());
 }
 
-void RM::Device::RemoveDescriptor(const TextureView* texture)
+void RM::Device::RemoveDescriptor(const Texture* texture)
 {
-    DescriptorHeap* heap = nullptr;
-    switch (texture->m_info.view_type)
+    for (uint32_t i = 0; i < texture->m_descriptors.size(); ++i)
     {
-        case TextureViewType::RenderTarget:
-            heap = &m_rtv_heap;
-            break;
-        case TextureViewType::DepthStencil:
-            heap = &m_dsv_heap;
-            break;
-        case TextureViewType::ShaderRead:
-        case TextureViewType::ShaderReadWrite:
-            heap = &m_srv_heap;
-            break;
+        if (texture->m_descriptors[i] == UINT32_MAX) continue;
+        const auto type = static_cast<TextureViewType>(i);
+        DescriptorHeap* heap = nullptr;
+        switch (type)
+        {
+            case TextureViewType::RenderTarget:
+                heap = &m_rtv_heap;
+                break;
+            case TextureViewType::DepthStencil:
+                heap = &m_dsv_heap;
+                break;
+            case TextureViewType::ShaderRead:
+            case TextureViewType::ShaderReadWrite:
+                heap = &m_srv_heap;
+                break;
+        }
+        heap->free_descriptors.push_back(texture->m_descriptors[i]);
     }
-    heap->free_descriptors.push_back(texture->GetResourceIndex());
 }
 
 void RM::Device::RemoveDescriptor(const Sampler* sampler)
@@ -395,44 +425,46 @@ void* RM::Device::GetNativeRootSignature() const
     return m_root_sig.Get();
 }
 
-RM::TextureView* RM::Device::GetCurrentBackBuffer()
+RM::Texture* RM::Device::GetCurrentBackBuffer()
 {
-    return m_frame_datas[m_swapchain->GetCurrentBackBufferIndex()].swapchain_rtv;
+    return m_frame_datas[m_swapchain->GetCurrentBackBufferIndex()].swapchain_texture;
 }
 
-void RM::Device::NewFrame(Queue*)
+RM::Result<void> RM::Device::NewFrame(Queue*)
 {
-    m_frame_datas[m_current_frame].swapchain_fence->
-                                   Wait(m_frame_datas[m_current_frame].fence_value);
+    return m_frame_datas[m_current_frame].swapchain_fence->Wait(
+        m_frame_datas[m_current_frame].fence_value);
 }
 
-void RM::Device::Resize(uint32_t width, uint32_t height)
+RM::Result<void> RM::Device::Resize(uint32_t width, uint32_t height)
 {
+    if (!width || !height) return {};
+    if (auto result = m_graphics_queue->WaitIdle(); !result) return std::unexpected(result.error());
     for (auto& frame_data : m_frame_datas)
     {
+        m_core_residency_set->RemoveAllocation(frame_data.swapchain_texture);
         delete frame_data.swapchain_texture;
-        delete frame_data.swapchain_rtv;
         frame_data.swapchain_texture = nullptr;
-        frame_data.swapchain_rtv = nullptr;
     }
-    m_swapchain->ResizeBuffers(3,
-                               width,
-                               height,
-                               DXGI_FORMAT_R8G8B8A8_UNORM,
-                               DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING);
+    if (FAILED(m_swapchain->ResizeBuffers(3,
+                                          width,
+                                          height,
+                                          DXGI_FORMAT_R8G8B8A8_UNORM,
+                                          DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)))
+        return std::unexpected("Failed to resize swapchain");
 
     for (int i = 0; i < 3; i++)
     {
         ID3D12Resource* swapchain_texture = nullptr;
-        m_swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchain_texture));
-        m_frame_datas[i].swapchain_texture = new Texture(this,
-                                                         swapchain_texture,
-                                                         TextureUsage::RenderTarget);
-        m_frame_datas[i].swapchain_rtv = CreateTextureView({
-            .texture = m_frame_datas[i].swapchain_texture,
-            .view_type = TextureViewType::RenderTarget,
-        });
+        if (FAILED(m_swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchain_texture))))
+            return std::unexpected("Failed to get swapchain buffer");
+        auto texture = CreateObject<Texture>(this, swapchain_texture, TextureUsage::RenderTarget);
+        swapchain_texture->Release();
+        if (!texture) return std::unexpected(texture.error());
+        m_frame_datas[i].swapchain_texture = *texture;
+        m_core_residency_set->AddAllocation(m_frame_datas[i].swapchain_texture);
     }
+    return {};
 }
 
 void* RM::Device::GetNativeHandle() const
@@ -440,7 +472,7 @@ void* RM::Device::GetNativeHandle() const
     return m_device.Get();
 }
 
-void RM::Device::CreateRootSignature()
+RM::Result<void> RM::Device::CreateRootSignature()
 {
     D3D12_DESCRIPTOR_RANGE1 ranges[2];
 
@@ -527,7 +559,7 @@ void RM::Device::CreateRootSignature()
         &error_blob);
     if (FAILED(result))
     {
-        throw std::runtime_error("Failed to serialize root signature");
+        return std::unexpected("Failed to serialize root signature");
     }
 
     result = m_device->CreateRootSignature(0,
@@ -536,8 +568,9 @@ void RM::Device::CreateRootSignature()
                                            IID_PPV_ARGS(m_root_sig.GetAddressOf()));
     if (FAILED(result))
     {
-        throw std::runtime_error("Failed to create root signature");
+        return std::unexpected("Failed to create root signature");
     }
+    return {};
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE RM::Device::GetCPUDescriptor(TextureViewType type, uint32_t index)
@@ -578,7 +611,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE RM::Device::GetGPUDescriptor(TextureViewType type, u
     return heap->GetGPUHandle(index);
 }
 
-RM::Device::DescriptorHeap RM::Device::CreateDescriptorHeap(
+RM::Result<RM::Device::DescriptorHeap> RM::Device::CreateDescriptorHeap(
     const D3D12_DESCRIPTOR_HEAP_TYPE heap_type,
     const uint32_t count) const
 {
@@ -600,7 +633,7 @@ RM::Device::DescriptorHeap RM::Device::CreateDescriptorHeap(
         IID_PPV_ARGS(heap.heap.GetAddressOf()));
     if (FAILED(result))
     {
-        throw std::runtime_error("Failed to create descriptor heap");
+        return std::unexpected("Failed to create descriptor heap");
     }
     heap.stride = m_device->GetDescriptorHandleIncrementSize(heap_type);
     heap.cpu_base = heap.heap->GetCPUDescriptorHandleForHeapStart();

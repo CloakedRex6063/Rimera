@@ -4,17 +4,23 @@
 #include "rimera_helpers.hpp"
 #include "rimera_metal.hpp"
 #include "rimera_texture.hpp"
-#include "stdexcept"
 #include "rimera_builders.hpp"
 
-RM::Command::Command(Device* device, QueueType) : m_device(device)
+RM::Result<void> RM::Command::Initialize(Device* device, QueueType)
 {
+    m_device = device;
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
     m_command_buffer = NS::TransferPtr(native_device->newCommandBuffer());
     m_command_allocator = NS::TransferPtr(native_device->newCommandAllocator());
+    if (!m_command_buffer || !m_command_allocator)
+        return std::unexpected("Failed to create command buffer or allocator");
 
-    m_blit_buffer =
-        device->CreateBuffer({.size = sizeof(BlitPassData), .data = nullptr});
+    auto blit_buffer_result = device->CreateBuffer({.size = sizeof(BlitPassData), .data = nullptr});
+    if (!blit_buffer_result) return std::unexpected(blit_buffer_result.error());
+    m_blit_buffer = std::move(*blit_buffer_result);
+    auto mapped = m_blit_buffer->Map();
+    if (!mapped) return std::unexpected(mapped.error());
+    m_blit_data = static_cast<BlitPassData*>(*mapped);
 
     SamplerCreateInfo create_info
     {
@@ -30,17 +36,26 @@ RM::Command::Command(Device* device, QueueType) : m_device(device)
         .comparison_func = ComparisonFunc::Never,
         .reduction_type = ReductionType::Standard,
     };
-    m_sampler = device->CreateSampler(create_info);
+    auto sampler_result = device->CreateSampler(create_info);
+    if (!sampler_result) return std::unexpected(sampler_result.error());
+    m_sampler = std::move(*sampler_result);
 
     m_device->GetCoreResidencySet()->AddAllocation(m_blit_buffer);
     m_device->GetCoreResidencySet()->Commit();
     m_device->GetCoreResidencySet()->RequestResidency();
+    return {};
 }
 
 RM::Command::~Command()
 {
     m_command_buffer.reset();
     m_command_allocator.reset();
+    if (m_blit_buffer)
+    {
+        m_device->GetCoreResidencySet()->RemoveAllocation(m_blit_buffer);
+        m_device->DestroyBuffer(m_blit_buffer);
+    }
+    if (m_sampler) m_device->DestroySampler(m_sampler);
 }
 
 void RM::Command::Begin()
@@ -61,7 +76,7 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
         auto info_attach = info.color_attachments[i];
         auto* attachment = rpd->colorAttachments()->object(i);
         auto [r, g, b, a] = info_attach.clear_color;
-        attachment->setTexture(static_cast<MTL::Texture*>(info_attach.texture->GetView()));
+        attachment->setTexture(static_cast<MTL::Texture*>(info_attach.texture->GetNativeHandle()));
         attachment->setClearColor(MTL::ClearColor(r, g, b, a));
         attachment->setLoadAction(static_cast<MTL::LoadAction>(info_attach.load_op));
         attachment->setStoreAction(static_cast<MTL::StoreAction>(info_attach.store_op));
@@ -69,9 +84,9 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
 
     if (info.depth_attachment.has_value())
     {
-        auto info_attach = info.depth_attachment.value();
+        auto info_attach = *info.depth_attachment;
         auto* attachment = rpd->depthAttachment();
-        attachment->setTexture(static_cast<MTL::Texture*>(info_attach.texture->GetView()));
+        attachment->setTexture(static_cast<MTL::Texture*>(info_attach.texture->GetNativeHandle()));
         attachment->setLoadAction(static_cast<MTL::LoadAction>(info_attach.load_op));
         attachment->setStoreAction(static_cast<MTL::StoreAction>(info_attach.store_op));
     }
@@ -108,21 +123,25 @@ void RM::Command::Draw(uint32_t vertex_count,
                                      start_instance);
 }
 
-void RM::Command::DrawIndexed(uint32_t index_count,
-                              uint32_t instance_count,
-                              uint32_t start_index,
-                              uint32_t start_vertex,
-                              uint32_t start_instance) const
+RM::Result<void> RM::Command::DrawIndexed(uint32_t index_count,
+                                          uint32_t instance_count,
+                                          uint32_t start_index,
+                                          uint32_t start_vertex,
+                                          uint32_t start_instance) const
 {
+#ifdef RIMERA_DEBUG
     if (!m_render_encoder)
-        throw std::runtime_error("BeginRenderPass is required before drawing indexed primitives");
+        return std::unexpected("BeginRenderPass is required before drawing indexed primitives");
     if (!m_index_buffer.index_size)
-        throw std::runtime_error("BindIndexBuffer is required before drawing indexed primitives");
+        return std::unexpected("BindIndexBuffer is required before drawing indexed primitives");
+#endif
 
     const uint64_t offset = uint64_t{start_index} * m_index_buffer.index_size;
+#ifdef RIMERA_DEBUG
     const uint64_t size = uint64_t{index_count} * m_index_buffer.index_size;
     if (offset > m_index_buffer.length || size > m_index_buffer.length - offset)
-        throw std::out_of_range("Indexed draw exceeds the bound index buffer");
+        return std::unexpected("Indexed draw exceeds the bound index buffer");
+#endif
 
     m_render_encoder->drawIndexedPrimitives(m_primitive_type,
                                             index_count,
@@ -134,47 +153,57 @@ void RM::Command::DrawIndexed(uint32_t index_count,
                                             instance_count,
                                             start_vertex,
                                             start_instance);
+    return {};
 }
 
-void RM::Command::BindIndexBuffer(const Buffer* buffer, Format format)
+RM::Result<void> RM::Command::BindIndexBuffer(const Buffer* buffer, Format format)
 {
-    if (!buffer) throw std::invalid_argument("Cannot bind a null index buffer");
+#ifdef RIMERA_DEBUG
+    if (!buffer) return std::unexpected("Cannot bind a null index buffer");
     if (format != Format::R16_UInt && format != Format::R32_UInt)
-        throw std::invalid_argument("Index buffers require R16_UInt or R32_UInt format");
+        return std::unexpected("Index buffers require R16_UInt or R32_UInt format");
+#endif
 
     m_index_buffer = {
         .address = buffer->GetGPUAddress(),
         .length = buffer->GetLength(),
         .index_size = format == Format::R16_UInt ? 2u : 4u,
     };
+    return {};
 }
 
-void RM::Command::BindShader(const Pipeline* shader)
+RM::Result<void> RM::Command::BindShader(const Pipeline* shader)
 {
-    if (!shader) throw std::invalid_argument("Cannot bind a null pipeline");
+#ifdef RIMERA_DEBUG
+    if (!shader) return std::unexpected("Cannot bind a null pipeline");
     if (shader->m_device != m_device)
-        throw std::invalid_argument("Pipeline belongs to a different device");
+        return std::unexpected("Pipeline belongs to a different device");
+#endif
 
     switch (shader->GetShaderType())
     {
         case PipelineType::Compute:
+#ifdef RIMERA_DEBUG
             if (!m_compute_encoder)
-                throw std::runtime_error(
+                return std::unexpected(
                     "BeginComputePass is required before binding a compute pipeline");
+#endif
             m_compute_encoder->setComputePipelineState(shader->m_compute_pso.get());
             m_threads_per_compute = shader->GetComputeThreadsPerThreadgroup();
             break;
         case PipelineType::Graphics:
         {
+#ifdef RIMERA_DEBUG
             if (!m_render_encoder)
-                throw std::runtime_error(
+                return std::unexpected(
                     "BeginRenderPass is required before binding a graphics pipeline");
+#endif
             const auto& rasterizer = shader->m_rasterizer_state;
             m_render_encoder->setRenderPipelineState(shader->m_render_pso.get());
             m_render_encoder->setDepthStencilState(shader->m_depth_stencil_state.get());
-            m_render_encoder->setCullMode(Metal::ToCullMode(rasterizer.cull_mode));
-            m_render_encoder->setFrontFacingWinding(Metal::ToWinding(rasterizer.front_face));
-            m_render_encoder->setTriangleFillMode(Metal::ToTriangleFillMode(rasterizer.fill_mode));
+            m_render_encoder->setCullMode(shader->m_cull_mode);
+            m_render_encoder->setFrontFacingWinding(shader->m_winding);
+            m_render_encoder->setTriangleFillMode(shader->m_fill_mode);
             m_render_encoder->setDepthBias(static_cast<float>(rasterizer.depth_bias),
                                            rasterizer.slope_scaled_depth_bias,
                                            rasterizer.depth_bias_clamp);
@@ -186,6 +215,7 @@ void RM::Command::BindShader(const Pipeline* shader)
             break;
         }
     }
+    return {};
 }
 
 void RM::Command::Barrier(const BarrierGroup& group)
@@ -292,7 +322,7 @@ void RM::Command::SetPrimitiveTopology(PrimitiveTopology topology)
     m_primitive_type = Metal::ToPrimitiveType(topology);
 }
 
-void RM::Command::CopyTexture(const Texture* source, const Texture* dest)
+RM::Result<void> RM::Command::CopyTexture(const Texture* source, const Texture* dest)
 {
     GetComputeEncoder();
     const auto* src = static_cast<MTL::Texture*>(source->GetNativeHandle());
@@ -302,18 +332,23 @@ void RM::Command::CopyTexture(const Texture* source, const Texture* dest)
 
     m_compute_encoder->endEncoding();
     m_compute_encoder = nullptr;
+    return {};
 }
 
-void RM::Command::Blit(const TextureView* source, const TextureView* dest, const BlitRegion& region)
+RM::Result<void> RM::Command::Blit(const Texture* source,
+                                   const Texture* dest,
+                                   const BlitRegion& region)
 {
-    auto src_dim = source->GetTexture()->GetDimensions();
-    auto dst_dim = dest->GetTexture()->GetDimensions();
+    auto src_dim = source->GetDimensions();
+    auto dst_dim = dest->GetDimensions();
 
     if (!m_device->m_blit_pipelines.contains(dest->GetFormat()))
     {
-        m_device->m_blit_pipelines[dest->GetFormat()] = Helpers::CreateBlitShader(
-            m_device,
-            dest->GetFormat());
+        auto pipeline = Helpers::CreateBlitShader(m_device, dest->GetFormat());
+#ifdef RIMERA_DEBUG
+        if (!pipeline) return std::unexpected(pipeline.error());
+#endif
+        m_device->m_blit_pipelines[dest->GetFormat()] = *pipeline;
     }
 
     uint32_t src_w = std::max(1u, src_dim.x >> region.src_mip);
@@ -326,10 +361,9 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
                    ? Rect{.offset = {}, .size = {.x = dst_dim.x, .y = dst_dim.y}}
                    : region.dst_rect;
 
-    if (src.size.x == 0 || src.size.y == 0 || dst.size.x == 0 || dst.size.y == 0)
-        return;
+    if (src.size.x == 0 || src.size.y == 0 || dst.size.x == 0 || dst.size.y == 0) return {};
 
-    auto* pass_data = static_cast<BlitPassData*>(m_blit_buffer->Map());
+    auto* pass_data = m_blit_data;
     *pass_data = {
         .src_index = source->GetResourceIndex(),
         .sampler_index = m_sampler->GetSamplerIndex(),
@@ -344,8 +378,19 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
 
     BeginRenderPass(RenderPassBuilder(dst_dim).Color(dest).Build());
 
-    BindShader(m_device->m_blit_pipelines[dest->GetFormat()]);
-    BindConstantBuffer(1, m_blit_buffer);
+#ifdef RIMERA_DEBUG
+    if (auto result = BindShader(m_device->m_blit_pipelines[dest->GetFormat()]); !result)
+        return std::unexpected(result.error());
+#else
+    static_cast<void>(BindShader(m_device->m_blit_pipelines[dest->GetFormat()]));
+#endif
+
+#ifdef RIMERA_DEBUG
+    if (auto result = BindConstantBuffer(1, m_blit_buffer); !result)
+        return std::unexpected(result.error());
+#else
+    static_cast<void>(BindConstantBuffer(1, m_blit_buffer));
+#endif
 
     SetViewport(Viewport{
         .offset = {.x = dst.offset.x, .y = dst.offset.y},
@@ -357,6 +402,7 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
 
     Draw(3, 1, 0, 0);
     EndRenderPass();
+    return {};
 }
 
 void RM::Command::DispatchMesh(DispatchGroup dispatch_group) const
@@ -377,12 +423,15 @@ void RM::Command::Dispatch(DispatchGroup dispatch_group)
     m_compute_encoder = nullptr;
 }
 
-void RM::Command::BindConstantBuffer(const uint32_t slot, const Buffer* buffer) const
+RM::Result<void> RM::Command::BindConstantBuffer(const uint32_t slot, const Buffer* buffer) const
 {
-    if (slot > 1) throw std::runtime_error("Only slot 0 and 1 are bindable");
+#ifdef RIMERA_DEBUG
+    if (!buffer || slot > 1) return std::unexpected("Invalid constant buffer binding");
+#endif
     auto* args = static_cast<uint8_t*>(m_device->GetArgBuffer()->contents());
     uint64_t address = buffer->GetGPUAddress();
     std::memcpy(args + slot * sizeof(uint64_t), &address, sizeof(uint64_t));
+    return {};
 }
 
 void* RM::Command::GetNativeCommand() const { return m_command_buffer.get(); }
@@ -402,12 +451,15 @@ void RM::Command::GetComputeEncoder()
     m_pending_barriers.clear();
 }
 
-RM::CommandRing::CommandRing(Device* device, QueueType type)
+RM::Result<void> RM::CommandRing::Initialize(Device* device, QueueType type)
 {
     for (auto& command : m_commands)
     {
-        command = new Command(device, type);
+        auto result = device->CreateCommand(type);
+        if (!result) return std::unexpected(result.error());
+        command = *result;
     }
+    return {};
 }
 
 RM::CommandRing::~CommandRing()

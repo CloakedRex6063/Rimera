@@ -2,28 +2,36 @@
 
 #include "rimera_device.hpp"
 
-RM::Fence::Fence(Device* device) : m_device(device)
+RM::Result<void> RM::Fence::Initialize(Device* device)
 {
+    m_device = device;
     auto* native_device = static_cast<MTL::Device*>(m_device->GetNativeHandle());
     m_event = NS::TransferPtr(native_device->newSharedEvent());
+    if (!m_event) return std::unexpected("Failed to create shared event");
+    return {};
 }
 
 RM::Fence::~Fence() { m_event.reset(); }
 
 void* RM::Fence::GetNativeHandle() const { return m_event.get(); }
 
-void RM::Fence::Wait(uint64_t value) const
+RM::Result<void> RM::Fence::Wait(uint64_t value) const
 {
-    m_event->waitUntilSignaledValue(value, UINT64_MAX);
+    if (!m_event->waitUntilSignaledValue(value, UINT64_MAX))
+        return std::unexpected("Failed to wait for fence");
+    return {};
 }
 
-RM::Queue::Queue(Device* device, QueueType) : m_device(device)
+RM::Result<void> RM::Queue::Initialize(Device* device, QueueType)
 {
+    m_device = device;
     auto* native_device = static_cast<MTL::Device*>(m_device->GetNativeHandle());
     m_queue = NS::TransferPtr(native_device->newMTL4CommandQueue());
+    if (!m_queue) return std::unexpected("Failed to create command queue");
+    return {};
 }
 
-RM::Queue::~Queue() { WaitIdle(); }
+RM::Queue::~Queue() = default;
 
 void RM::Queue::AddResidencySet(const ResidencySet* residency_set) const
 {
@@ -35,15 +43,21 @@ void RM::Queue::RemoveResidencySet(const ResidencySet* residency_set) const
     m_queue->removeResidencySet(static_cast<MTL::ResidencySet*>(residency_set->GetNative()));
 }
 
-void RM::Queue::WaitIdle()
+RM::Result<void> RM::Queue::WaitIdle()
 {
-    auto fence = m_device->CreateFence();
-    Signal(fence, 1);
+    auto result_fence = m_device->CreateFence();
+    if (!result_fence) return std::unexpected(result_fence.error());
+    auto fence = std::move(*result_fence);
+    auto signal = Signal(fence, 1);
+    auto waited = signal ? fence->Wait(1) : std::move(signal);
+    m_device->DestroyFence(fence);
+    return waited;
 }
 
-void RM::Queue::Signal(const Fence* fence, uint64_t value) const
+RM::Result<void> RM::Queue::Signal(const Fence* fence, uint64_t value) const
 {
     m_queue->signalEvent(static_cast<MTL::Event*>(fence->GetNativeHandle()), value);
+    return {};
 }
 
 void* RM::Queue::GetNativeHandle() const
@@ -58,11 +72,13 @@ void RM::Queue::Submit(const Command* command) const
     m_queue->commit(buffers, 1);
 }
 
-void RM::Queue::Present() const
+RM::Result<void> RM::Queue::Present() const
 {
+    if (!m_device->m_drawable) return std::unexpected("No drawable is available");
     auto* drawable = static_cast<MTL::Drawable*>(m_device->m_drawable);
     m_queue->signalDrawable(drawable);
     drawable->present();
+    return {};
 }
 
 void RM::Queue::AddResidencySet(const MTL::ResidencySet* residency_set) const

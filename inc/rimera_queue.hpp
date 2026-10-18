@@ -7,14 +7,17 @@ namespace RM
     class Fence
     {
     public:
+        Fence(const Fence&) = delete;
+        Fence& operator=(const Fence&) = delete;
         ~Fence();
         [[nodiscard]] void* GetNativeHandle() const;
-        void Wait(uint64_t value) const;
+        [[nodiscard]] Result<void> Wait(uint64_t value) const;
 
     private:
+        Fence() = default;
         friend class Device;
-        Device* m_device;
-        Fence(Device* device);
+        Device* m_device = nullptr;
+        [[nodiscard]] Result<void> Initialize(Device* device);
 #ifdef RIMERA_MAC
         NS::SharedPtr<MTL::SharedEvent> m_event;
 #elifdef RIMERA_WINDOWS
@@ -25,18 +28,21 @@ namespace RM
     class Queue
     {
     public:
+        Queue(const Queue&) = delete;
+        Queue& operator=(const Queue&) = delete;
         ~Queue();
 
         void AddResidencySet(const ResidencySet* residency_set) const;
         void RemoveResidencySet(const ResidencySet* residency_set) const;
-        void WaitIdle();
-        void Signal(const Fence* fence, uint64_t value) const;
+        [[nodiscard]] Result<void> WaitIdle();
+        [[nodiscard]] Result<void> Signal(const Fence* fence, uint64_t value) const;
         void Submit(const Command* command) const;
-        void Present() const;
+        [[nodiscard]] Result<void> Present() const;
 
         void* GetNativeHandle() const;
 
     private:
+        Queue() = default;
 #ifdef RIMERA_MAC
         void AddResidencySet(const MTL::ResidencySet* residency_set) const;
         void RemoveResidencySet(const MTL::ResidencySet* residency_set) const;
@@ -46,8 +52,8 @@ namespace RM
         ComPtr<ID3D12CommandQueue> m_queue;
 #endif
         friend class Device;
-        Queue(Device* device, QueueType type);
-        Device* m_device;
+        [[nodiscard]] Result<void> Initialize(Device* device, QueueType type);
+        Device* m_device = nullptr;
         uint64_t m_value = 0;
     };
 } // namespace RM

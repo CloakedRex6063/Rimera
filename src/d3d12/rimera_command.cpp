@@ -12,11 +12,14 @@ RM::Command::~Command()
     m_command_buffer.Reset();
     m_device->DestroyBuffer(m_blit_buffer);
     m_device->DestroyPipeline(m_blit_shader);
+    m_device->DestroySampler(m_sampler);
 }
 
 void RM::Command::Begin()
 {
+#ifdef RIMERA_DEBUG
     m_index_buffer = {};
+#endif
     m_command_allocator->Reset();
 
     m_command_buffer->Reset(m_command_allocator.Get(), nullptr);
@@ -44,27 +47,27 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
     {
         auto [render_target, clear_color, store_op, load_op] = info.color_attachments[i];
         render_target_descriptors[i] = D3D12_RENDER_PASS_RENDER_TARGET_DESC{
-            .cpuDescriptor = heap.GetCPUHandle(render_target->GetResourceIndex()),
-            .BeginningAccess = D3D12::ToBeginAccess(render_target->GetFormat(),
-                                                    load_op,
-                                                    clear_color),
+            .cpuDescriptor =
+                heap.GetCPUHandle(render_target->GetResourceIndex(TextureViewType::RenderTarget)),
+            .BeginningAccess =
+                D3D12::ToBeginAccess(render_target->GetFormat(), load_op, clear_color),
             .EndingAccess = D3D12::ToEndAccess(store_op),
         };
     }
     const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC* depth_desc = nullptr;
+    D3D12_RENDER_PASS_DEPTH_STENCIL_DESC depth_stencil_desc{};
     if (info.depth_attachment.has_value())
     {
         auto [depth_stencil, clear_depth, clear_stencil, load_op, store_op] = info.depth_attachment.
             value();
-        const D3D12_RENDER_PASS_DEPTH_STENCIL_DESC depth_stencil_desc{
-            .cpuDescriptor = heap.GetCPUHandle(depth_stencil->GetResourceIndex()),
-            .DepthBeginningAccess =
-            D3D12::ToBeginAccess(depth_stencil->GetFormat(),
-                                 load_op,
-                                 clear_depth,
-                                 clear_stencil),
-            .StencilBeginningAccess =
-            {D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_NO_ACCESS},
+        depth_stencil_desc = {
+            .cpuDescriptor = m_device->m_dsv_heap.GetCPUHandle(
+                depth_stencil->GetResourceIndex(TextureViewType::DepthStencil)),
+            .DepthBeginningAccess = D3D12::ToBeginAccess(depth_stencil->GetFormat(),
+                                                         load_op,
+                                                         clear_depth,
+                                                         clear_stencil),
+            .StencilBeginningAccess = {D3D12_RENDER_PASS_BEGINNING_ACCESS_TYPE_NO_ACCESS},
             // TODO: handle stencil based on format
             .DepthEndingAccess = D3D12::ToEndAccess(store_op),
             .StencilEndingAccess = {.Type = D3D12_RENDER_PASS_ENDING_ACCESS_TYPE_NO_ACCESS},
@@ -83,14 +86,6 @@ void RM::Command::EndRenderPass()
     m_command_buffer->EndRenderPass();
 }
 
-void RM::Command::BeginComputePass()
-{
-}
-
-void RM::Command::EndComputePass()
-{
-}
-
 void RM::Command::Draw(const uint32_t vertex_count,
                        const uint32_t instance_count,
                        const uint32_t start_vertex,
@@ -99,32 +94,37 @@ void RM::Command::Draw(const uint32_t vertex_count,
     m_command_buffer->DrawInstanced(vertex_count, instance_count, start_vertex, start_instance);
 }
 
-void RM::Command::DrawIndexed(const uint32_t index_count,
-                              const uint32_t instance_count,
-                              const uint32_t start_index,
-                              const uint32_t start_vertex,
-                              const uint32_t start_instance) const
+RM::Result<void> RM::Command::DrawIndexed(const uint32_t index_count,
+                                          const uint32_t instance_count,
+                                          const uint32_t start_index,
+                                          const uint32_t start_vertex,
+                                          const uint32_t start_instance) const
 {
+#ifdef RIMERA_DEBUG
     if (!m_index_buffer.index_size)
-        throw std::runtime_error("BindIndexBuffer is required before drawing indexed primitives");
+        return std::unexpected("BindIndexBuffer is required before drawing indexed primitives");
 
     const uint64_t offset = uint64_t{start_index} * m_index_buffer.index_size;
     const uint64_t size = uint64_t{index_count} * m_index_buffer.index_size;
     if (offset > m_index_buffer.length || size > m_index_buffer.length - offset)
-        throw std::out_of_range("Indexed draw exceeds the bound index buffer");
+        return std::unexpected("Indexed draw exceeds the bound index buffer");
+#endif
 
     m_command_buffer->DrawIndexedInstanced(index_count,
                                            instance_count,
                                            start_index,
                                            start_vertex,
                                            start_instance);
+    return {};
 }
 
-void RM::Command::BindIndexBuffer(const Buffer* buffer, Format format)
+RM::Result<void> RM::Command::BindIndexBuffer(const Buffer* buffer, Format format)
 {
-    if (!buffer) throw std::invalid_argument("Cannot bind a null index buffer");
+#ifdef RIMERA_DEBUG
+    if (!buffer) return std::unexpected("Cannot bind a null index buffer");
     if (format != Format::R16_UInt && format != Format::R32_UInt)
-        throw std::invalid_argument("Index buffers require R16_UInt or R32_UInt format");
+        return std::unexpected("Index buffers require R16_UInt or R32_UInt format");
+#endif
 
     const D3D12_INDEX_BUFFER_VIEW view{
         .BufferLocation = buffer->GetGPUAddress(),
@@ -132,11 +132,14 @@ void RM::Command::BindIndexBuffer(const Buffer* buffer, Format format)
         .Format = format == Format::R16_UInt ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT,
     };
     m_command_buffer->IASetIndexBuffer(&view);
+#ifdef RIMERA_DEBUG
     m_index_buffer = {
         .address = view.BufferLocation,
         .length = view.SizeInBytes,
         .index_size = format == Format::R16_UInt ? 2u : 4u,
     };
+#endif
+    return {};
 }
 
 void RM::Command::DispatchMesh(const DispatchGroup dispatch_group) const
@@ -144,20 +147,28 @@ void RM::Command::DispatchMesh(const DispatchGroup dispatch_group) const
     m_command_buffer->DispatchMesh(dispatch_group.x, dispatch_group.y, dispatch_group.z);
 }
 
-void RM::Command::Dispatch(const DispatchGroup dispatch_group) const
+void RM::Command::Dispatch(const DispatchGroup dispatch_group)
 {
     m_command_buffer->Dispatch(dispatch_group.x, dispatch_group.y, dispatch_group.z);
 }
 
-void RM::Command::BindShader(const Pipeline* shader)
+RM::Result<void> RM::Command::BindShader(const Pipeline* shader)
 {
+#ifdef RIMERA_DEBUG
+    if (!shader) return std::unexpected("Cannot bind a null pipeline");
+#endif
     auto* pipeline = static_cast<ID3D12PipelineState*>(shader->GetNativeHandle());
     m_command_buffer->SetPipelineState(pipeline);
+    return {};
 }
 
-void RM::Command::BindConstantBuffer(uint32_t slot, const Buffer* buffer) const
+RM::Result<void> RM::Command::BindConstantBuffer(uint32_t slot, const Buffer* buffer) const
 {
+#ifdef RIMERA_DEBUG
+    if (!buffer || slot > 1) return std::unexpected("Invalid constant buffer binding");
+#endif
     m_command_buffer->SetGraphicsRootConstantBufferView(slot, buffer->GetGPUAddress());
+    return {};
 }
 
 void RM::Command::Barrier(const BarrierGroup& group)
@@ -220,7 +231,7 @@ void RM::Command::Barrier(const std::span<const TextureBarrier> barriers)
 {
     BarrierGroup group;
     group.texture_barriers = barriers;
-    Barrier(std::span{&group, 1});
+    Barrier(group);
 }
 
 void RM::Command::Barrier(const TextureBarrier& barrier)
@@ -232,7 +243,7 @@ void RM::Command::Barrier(const std::span<const BufferBarrier> barriers)
 {
     BarrierGroup group;
     group.buffer_barriers = barriers;
-    Barrier(std::span{&group, 1});
+    Barrier(group);
 }
 
 void RM::Command::Barrier(const BufferBarrier& barrier)
@@ -244,7 +255,7 @@ void RM::Command::Barrier(const std::span<const GlobalBarrier> barriers)
 {
     BarrierGroup group;
     group.global_barriers = barriers;
-    Barrier(std::span{&group, 1});
+    Barrier(group);
 }
 
 void RM::Command::Barrier(const GlobalBarrier& barrier)
@@ -278,22 +289,48 @@ void RM::Command::SetScissor(const Rect& rect) const
     m_command_buffer->RSSetScissorRects(1, &scissor);
 }
 
-void RM::Command::SetPrimitiveTopology(const PrimitiveTopology topology) const
+void RM::Command::SetPrimitiveTopology(const PrimitiveTopology topology)
 {
     m_command_buffer->IASetPrimitiveTopology(D3D12::GetPrimitiveTopology(topology));
 }
 
-void RM::Command::CopyTexture(const Texture* source, const Texture* dest) const
+RM::Result<void> RM::Command::CopyTexture(const Texture* source, const Texture* dest)
 {
     auto* src_res = static_cast<ID3D12Resource*>(source->GetNativeHandle());
     auto* dest_res = static_cast<ID3D12Resource*>(dest->GetNativeHandle());
-    m_command_buffer->CopyResource(dest_res, src_res);
+#ifdef RIMERA_DEBUG
+    if (source->GetDimensions().x != dest->GetDimensions().x ||
+        source->GetDimensions().y != dest->GetDimensions().y ||
+        source->GetMipLevels() != dest->GetMipLevels() ||
+        source->GetArrayLayers() != dest->GetArrayLayers())
+        return std::unexpected("Texture copy ranges must match");
+#endif
+    for (uint32_t layer = 0; layer < source->GetArrayLayers(); ++layer)
+    {
+        for (uint32_t mip = 0; mip < source->GetMipLevels(); ++mip)
+        {
+            D3D12_TEXTURE_COPY_LOCATION src{};
+            src.pResource = src_res;
+            src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            src.SubresourceIndex = source->GetBaseMip() + mip +
+                                   (source->GetBaseLayer() + layer) * src_res->GetDesc().MipLevels;
+            D3D12_TEXTURE_COPY_LOCATION dst{};
+            dst.pResource = dest_res;
+            dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            dst.SubresourceIndex = dest->GetBaseMip() + mip +
+                                   (dest->GetBaseLayer() + layer) * dest_res->GetDesc().MipLevels;
+            m_command_buffer->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+        }
+    }
+    return {};
 }
 
-void RM::Command::Blit(const TextureView* source, const TextureView* dest, const BlitRegion& region)
+RM::Result<void> RM::Command::Blit(const Texture* source,
+                                   const Texture* dest,
+                                   const BlitRegion& region)
 {
-    auto src_dim = source->GetTexture()->GetDimensions();
-    auto dst_dim = dest->GetTexture()->GetDimensions();
+    auto src_dim = source->GetDimensions();
+    auto dst_dim = dest->GetDimensions();
 
     uint32_t src_w = std::max(1u, src_dim.x >> region.src_mip);
     uint32_t src_h = std::max(1u, src_dim.y >> region.src_mip);
@@ -305,10 +342,9 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
                    ? Rect{.offset = {}, .size = {.x = dst_dim.x, .y = dst_dim.y}}
                    : region.dst_rect;
 
-    if (src.size.x == 0 || src.size.y == 0 || dst.size.x == 0 || dst.size.y == 0)
-        return;
+    if (src.size.x == 0 || src.size.y == 0 || dst.size.x == 0 || dst.size.y == 0) return {};
 
-    auto* pass_data = static_cast<BlitPassData*>(m_blit_buffer->Map());
+    auto* pass_data = m_blit_data;
     *pass_data = {
         .src_index = source->GetResourceIndex(),
         .sampler_index = m_sampler->GetSamplerIndex(),
@@ -323,8 +359,18 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
 
     BeginRenderPass(RenderPassBuilder(dst_dim).Color(dest).Build());
 
-    BindShader(m_blit_shader);
-    BindConstantBuffer(1, m_blit_buffer);
+#ifdef RIMERA_DEBUG
+    if (auto result = BindShader(m_blit_shader); !result) return std::unexpected(result.error());
+#else
+    static_cast<void>(BindShader(m_blit_shader));
+#endif
+
+#ifdef RIMERA_DEBUG
+    if (auto result = BindConstantBuffer(1, m_blit_buffer); !result)
+        return std::unexpected(result.error());
+#else
+    static_cast<void>(BindConstantBuffer(1, m_blit_buffer));
+#endif
 
     SetViewport(Viewport{
         .offset = {.x = dst.offset.x, .y = dst.offset.y},
@@ -336,6 +382,7 @@ void RM::Command::Blit(const TextureView* source, const TextureView* dest, const
 
     Draw(3, 1, 0, 0);
     EndRenderPass();
+    return {};
 }
 
 void* RM::Command::GetNativeCommand() const
@@ -348,22 +395,35 @@ void* RM::Command::GetNativeAllocator() const
     return m_command_allocator.Get();
 }
 
-RM::Command::Command(Device* device, QueueType queue_type) : m_device(device)
+RM::Result<void> RM::Command::Initialize(Device* device, QueueType queue_type)
 {
+    m_device = device;
     auto* native_device = static_cast<ID3D12Device15*>(device->GetNativeHandle());
-    native_device->CreateCommandAllocator(D3D12::GetQueueType(queue_type),
-                                          IID_PPV_ARGS(m_command_allocator.GetAddressOf()));
-    native_device->CreateCommandList(0,
-                                     D3D12::GetQueueType(queue_type),
-                                     m_command_allocator.Get(),
-                                     nullptr,
-                                     IID_PPV_ARGS(m_command_buffer.GetAddressOf()));
-    m_command_buffer->Close();
+    if (FAILED(native_device->CreateCommandAllocator(
+            D3D12::GetQueueType(queue_type),
+            IID_PPV_ARGS(m_command_allocator.GetAddressOf()))))
+        return std::unexpected("Failed to create command allocator");
+    if (FAILED(native_device->CreateCommandList(0,
+                                                D3D12::GetQueueType(queue_type),
+                                                m_command_allocator.Get(),
+                                                nullptr,
+                                                IID_PPV_ARGS(m_command_buffer.GetAddressOf()))))
+        return std::unexpected("Failed to create command list");
+    if (FAILED(m_command_buffer->Close())) return std::unexpected("Failed to close command list");
 
-    m_blit_shader = Helpers::CreateBlitShader(device);
-    m_blit_buffer =
-        device->CreateBuffer({.size = sizeof(BlitPassData), .data = nullptr,
-                              .flags = BufferFlags::eUnorderedAccess,});
+    auto blit_shader_result = Helpers::CreateBlitShader(device, Format::RGBA8_UNorm);
+    if (!blit_shader_result) return std::unexpected(blit_shader_result.error());
+    m_blit_shader = std::move(*blit_shader_result);
+    auto blit_buffer_result = device->CreateBuffer({
+        .size = sizeof(BlitPassData),
+        .data = nullptr,
+        .flags = BufferFlags::eUnorderedAccess,
+    });
+    if (!blit_buffer_result) return std::unexpected(blit_buffer_result.error());
+    m_blit_buffer = std::move(*blit_buffer_result);
+    auto mapped = m_blit_buffer->Map();
+    if (!mapped) return std::unexpected(mapped.error());
+    m_blit_data = static_cast<BlitPassData*>(*mapped);
 
     SamplerCreateInfo create_info
     {
@@ -379,15 +439,21 @@ RM::Command::Command(Device* device, QueueType queue_type) : m_device(device)
         .comparison_func = ComparisonFunc::Never,
         .reduction_type = ReductionType::Standard,
     };
-    m_sampler = device->CreateSampler(create_info);
+    auto sampler_result = device->CreateSampler(create_info);
+    if (!sampler_result) return std::unexpected(sampler_result.error());
+    m_sampler = std::move(*sampler_result);
+    return {};
 }
 
-RM::CommandRing::CommandRing(Device* device, QueueType queue_type)
+RM::Result<void> RM::CommandRing::Initialize(Device* device, QueueType queue_type)
 {
     for (auto& command : m_commands)
     {
-        command = new Command(device, queue_type);
+        auto result = device->CreateCommand(queue_type);
+        if (!result) return std::unexpected(result.error());
+        command = *result;
     }
+    return {};
 }
 
 RM::CommandRing::~CommandRing()

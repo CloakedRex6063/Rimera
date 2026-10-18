@@ -8,11 +8,11 @@ namespace RM
 
     namespace Helpers
     {
-        Pipeline* CreateBlitShader(Device* device, Format format);
-        void CheckDxc(HRESULT result, const char* operation);
-        IDxcBlob* CompileHlsl(std::string_view source,
-                              std::string_view entry_point,
-                              ShaderType type);
+        [[nodiscard]] Result<Pipeline*> CreateBlitShader(Device* device, Format format);
+        [[nodiscard]] Result<void> CheckDxc(HRESULT result, const char* operation);
+        [[nodiscard]] Result<IDxcBlob*> CompileHlsl(std::string_view source,
+                                                    std::string_view entry_point,
+                                                    ShaderType type);
         [[nodiscard]] bool IsDepthStencilFormat(Format format) noexcept;
         bool IsEmpty(const Rect& r);
     };

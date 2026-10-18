@@ -4,7 +4,7 @@
 
 RM::Sampler::~Sampler()
 {
-    m_device->RemoveDescriptor(this);
+    if (m_device && m_index != UINT32_MAX) m_device->RemoveDescriptor(this);
 }
 
 void* RM::Sampler::GetNativeHandle() const
@@ -12,8 +12,9 @@ void* RM::Sampler::GetNativeHandle() const
     return m_sampler.get();
 }
 
-RM::Sampler::Sampler(Device* device, const SamplerCreateInfo& info) : m_device(device)
+RM::Result<void> RM::Sampler::Initialize(Device* device, const SamplerCreateInfo& info)
 {
+    m_device = device;
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
     auto descriptor = NS::TransferPtr(MTL::SamplerDescriptor::alloc()->init());
     descriptor->setMinFilter(Metal::ToSamplerMinMagFilter(info.min_filter));
@@ -31,5 +32,9 @@ RM::Sampler::Sampler(Device* device, const SamplerCreateInfo& info) : m_device(d
                                        : MTL::CompareFunctionNever);
     descriptor->setReductionMode(Metal::ToSamplerReductionMode(info.reduction_type));
     m_sampler = NS::TransferPtr(native_device->newSamplerState(descriptor.get()));
-    m_index = m_device->AddDescriptor(this);
+    if (!m_sampler) return std::unexpected("Failed to create sampler");
+    auto index_result = m_device->AddDescriptor(this);
+    if (!index_result) return std::unexpected(index_result.error());
+    m_index = std::move(*index_result);
+    return {};
 }

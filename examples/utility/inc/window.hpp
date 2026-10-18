@@ -1,10 +1,11 @@
 #pragma once
+#include "rimera_result.hpp"
 #include "glm/glm.hpp"
 
 class Window
 {
 public:
-    Window();
+    [[nodiscard]] static RM::Result<Window*> Create();
     ~Window();
 
     Window(const Window&) = delete;
@@ -18,6 +19,8 @@ public:
     [[nodiscard]] void* GetNativeHandle() const;
 
 private:
+    Window() = default;
+    RM::Result<void> Initialize();
     bool m_running = false;
     bool m_resized = false;
     glm::uvec2 m_size{1280, 720};

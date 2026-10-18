@@ -8,9 +8,11 @@ namespace RM
     class Buffer
     {
     public:
+        Buffer(const Buffer&) = delete;
+        Buffer& operator=(const Buffer&) = delete;
         ~Buffer();
         void* GetNativeHandle() const noexcept;
-        void* Map();
+        [[nodiscard]] Result<void*> Map();
         void Unmap();
 
         [[nodiscard]] uint32_t GetResourceIndex() const { return m_resource_index; }
@@ -18,9 +20,10 @@ namespace RM
         [[nodiscard]] uint32_t GetLength() const { return m_length; }
 
     private:
-        Buffer(Device* device, const BufferCreateInfo& info);
+        Buffer() = default;
+        [[nodiscard]] Result<void> Initialize(Device* device, const BufferCreateInfo& info);
         friend class Device;
-        Device* m_device;
+        Device* m_device = nullptr;
         uint32_t m_resource_index = UINT32_MAX;
         uint32_t m_length = 0;
         EnumFlags<BufferFlags> m_flags;

@@ -49,36 +49,45 @@ static_assert(offsetof(Vertex, position) == 0 && offsetof(Vertex, normal) == 12 
               offsetof(Vertex, tangent) == 16 && offsetof(Vertex, bitangent) == 20 &&
               offsetof(Vertex, uv) == 24);
 
-struct BufferDeleter
-{
-    RM::Device* device{};
-    void operator()(RM::Buffer* buffer) const;
-};
-using OwnedBuffer = std::unique_ptr<RM::Buffer, BufferDeleter>;
-
 class Mesh
 {
 public:
-    Mesh(RM::Device* device, std::span<const Vertex> vertices, std::span<const uint32_t> indices,
-         uint32_t material_index, uint16_t texture_index = UINT16_MAX);
+    ~Mesh();
+    [[nodiscard]] static RM::Result<Mesh*> Create(RM::Device* device,
+                                                  std::span<const Vertex> vertices,
+                                                  std::span<const uint32_t> indices,
+                                                  uint32_t material_index,
+                                                  uint16_t texture_index = UINT16_MAX);
     Mesh(const Mesh&) = delete;
     Mesh& operator=(const Mesh&) = delete;
-    Mesh(Mesh&&) noexcept = default;
-    Mesh& operator=(Mesh&&) noexcept = default;
+    Mesh(Mesh&&) = delete;
+    Mesh& operator=(Mesh&&) = delete;
 
-    [[nodiscard]] RM::Buffer* GetVertexBuffer() const { return m_vertex_buffer.get(); }
-    [[nodiscard]] RM::Buffer* GetVertexIndexBuffer() const { return m_vertex_index_buffer.get(); }
-    [[nodiscard]] RM::Buffer* GetTriangleBuffer() const { return m_triangle_buffer.get(); }
-    [[nodiscard]] RM::Buffer* GetMeshletBuffer() const { return m_meshlet_buffer.get(); }
+    [[nodiscard]] RM::Buffer* GetVertexBuffer() const { return m_vertex_buffer; }
+    [[nodiscard]] RM::Buffer* GetVertexIndexBuffer() const { return m_vertex_index_buffer; }
+    [[nodiscard]] RM::Buffer* GetTriangleBuffer() const { return m_triangle_buffer; }
+    [[nodiscard]] RM::Buffer* GetMeshletBuffer() const { return m_meshlet_buffer; }
     [[nodiscard]] uint32_t GetVertexCount() const { return m_vertex_count; }
     [[nodiscard]] uint32_t GetTriangleCount() const { return m_triangle_count; }
     [[nodiscard]] uint32_t GetMeshletCount() const { return m_meshlet_count; }
     [[nodiscard]] uint32_t GetMaterialIndex() const { return m_material_index; }
     [[nodiscard]] uint16_t GetTextureIndex() const { return m_texture_index; }
-    [[nodiscard]] RM::Buffer* GenerateIndexBuffer() const;
+    [[nodiscard]] RM::Result<RM::Buffer*> GenerateIndexBuffer() const;
+
 private:
-    RM::Device* m_device;
-    OwnedBuffer m_vertex_buffer, m_vertex_index_buffer, m_triangle_buffer, m_meshlet_buffer;
+    Mesh() = default;
+    RM::Result<RM::Buffer*> Upload(const void* data, size_t bytes) const;
+    RM::Result<void> Initialize(RM::Device* device,
+                                std::span<const Vertex> vertices,
+                                std::span<const uint32_t> indices,
+                                uint32_t material_index,
+                                uint16_t texture_index);
+
+    RM::Device* m_device = nullptr;
+    RM::Buffer* m_vertex_buffer = nullptr;
+    RM::Buffer* m_vertex_index_buffer = nullptr;
+    RM::Buffer* m_triangle_buffer = nullptr;
+    RM::Buffer* m_meshlet_buffer = nullptr;
     uint32_t m_vertex_count{}, m_triangle_count{}, m_meshlet_count{}, m_material_index{};
     uint16_t m_texture_index{};
 };

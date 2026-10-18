@@ -8,14 +8,17 @@ namespace RM
     class Sampler
     {
     public:
+        Sampler(const Sampler&) = delete;
+        Sampler& operator=(const Sampler&) = delete;
         ~Sampler();
         [[nodiscard]] uint32_t GetSamplerIndex() const { return m_index; }
         [[nodiscard]] void* GetNativeHandle() const;
 
     private:
-        Sampler(Device* device, const SamplerCreateInfo& info);
+        Sampler() = default;
+        [[nodiscard]] Result<void> Initialize(Device* device, const SamplerCreateInfo& info);
         friend class Device;
-        Device* m_device;
+        Device* m_device = nullptr;
 
 #ifdef RIMERA_WINDOWS
         D3D12_CPU_DESCRIPTOR_HANDLE m_cpu_handle;
@@ -23,6 +26,6 @@ namespace RM
 #elifdef RIMERA_MAC
         NS::SharedPtr<MTL::SamplerState> m_sampler;
 #endif
-        uint32_t m_index;
+        uint32_t m_index = UINT32_MAX;
     };
 }

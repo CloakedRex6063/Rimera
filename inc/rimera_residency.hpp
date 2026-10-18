@@ -1,4 +1,5 @@
 #pragma once
+#include "rimera_result.hpp"
 
 namespace RM
 {
@@ -9,6 +10,8 @@ namespace RM
     class ResidencySet
     {
     public:
+        ResidencySet(const ResidencySet&) = delete;
+        ResidencySet& operator=(const ResidencySet&) = delete;
         ~ResidencySet();
 
         void AddAllocation(Texture* resource);
@@ -25,6 +28,7 @@ namespace RM
         [[nodiscard]] void* GetNative() const;
 
     private:
+        ResidencySet() = default;
 #ifdef RIMERA_MAC
         void AddAllocation(const MTL::Resource* resource) const;
         void RemoveAllocation(const MTL::Resource* resource) const;
@@ -33,7 +37,7 @@ namespace RM
         std::vector<ID3D12Pageable*> m_resources;
 #endif
         friend class Device;
-        ResidencySet(Device* device);
-        Device* m_device;
+        [[nodiscard]] Result<void> Initialize(Device* device);
+        Device* m_device = nullptr;
     };
 } // namespace RM

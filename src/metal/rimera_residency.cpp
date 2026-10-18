@@ -6,16 +6,21 @@
 
 namespace RM
 {
-    ResidencySet::ResidencySet(Device* device) : m_device(device)
+    Result<void> ResidencySet::Initialize(Device* device)
     {
+        m_device = device;
         auto* native_device = static_cast<MTL::Device*>(m_device->GetNativeHandle());
-        auto* descriptor = MTL::ResidencySetDescriptor::alloc()->init();
-        NS::Error* error;
-        m_residency_set = NS::TransferPtr(native_device->newResidencySet(descriptor, &error));
-        descriptor->release();
+        auto descriptor = NS::TransferPtr(MTL::ResidencySetDescriptor::alloc()->init());
+        NS::Error* error = nullptr;
+        m_residency_set = NS::TransferPtr(native_device->newResidencySet(descriptor.get(), &error));
+        if (!m_residency_set) return std::unexpected("Failed to create residency set");
+        return {};
     }
 
-    ResidencySet::~ResidencySet() { m_residency_set->removeAllAllocations(); }
+    ResidencySet::~ResidencySet()
+    {
+        if (m_residency_set) m_residency_set->removeAllAllocations();
+    }
 
     void ResidencySet::AddAllocation(Texture* resource)
     {

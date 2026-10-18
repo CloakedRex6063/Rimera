@@ -7,11 +7,14 @@ namespace RM
     class BLAS
     {
     public:
+        BLAS(const BLAS&) = delete;
+        BLAS& operator=(const BLAS&) = delete;
         [[nodiscard]] void* GetNativeHandle() const;
         
     private:
+        BLAS() = default;
         friend class Device;
-        BLAS(Device* device, const BLASCreateInfo& info);
+        [[nodiscard]] Result<void> Initialize(Device* device, const BLASCreateInfo& info);
 #ifdef RIMERA_MAC
         NS::SharedPtr<MTL::AccelerationStructure> m_blas;
 #endif
@@ -20,11 +23,14 @@ namespace RM
     class TLAS
     {
     public:
+        TLAS(const TLAS&) = delete;
+        TLAS& operator=(const TLAS&) = delete;
         [[nodiscard]] void* GetNativeHandle() const;
         
     private:
+        TLAS() = default;
         friend class Device;
-        TLAS(Device* device, const TLASCreateInfo& info);
+        [[nodiscard]] Result<void> Initialize(Device* device, const TLASCreateInfo& info);
 #ifdef RIMERA_MAC
         NS::SharedPtr<MTL::Buffer> m_data_buffer;
         uint32_t scratch_offset = 0;

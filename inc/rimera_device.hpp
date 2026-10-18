@@ -7,7 +7,6 @@
 #include "rimera_sampler.hpp"
 #include "rimera_shader.hpp"
 #include "rimera_texture.hpp"
-#include "rimera_texture_view.hpp"
 
 #ifdef RIMERA_MAC
 struct IRRootSignature;
@@ -16,43 +15,44 @@ struct IRRootSignature;
 namespace RM
 {
     class Device;
+    [[nodiscard]] Result<Device*> CreateDevice(const DeviceCreateInfo& info);
     void DestroyDevice(const Device* device);
 
     class Device
     {
     public:
-        Device(const DeviceCreateInfo& info);
+        Device(const Device&) = delete;
+        Device& operator=(const Device&) = delete;
         ~Device();
 
-        [[nodiscard]] Fence* CreateFence();
+        [[nodiscard]] Result<Fence*> CreateFence();
         void DestroyFence(const Fence* fence);
 
-        [[nodiscard]] Queue* CreateQueue(QueueType type);
+        [[nodiscard]] Result<Queue*> CreateQueue(QueueType type);
         void DestroyQueue(const Queue* queue);
 
-        [[nodiscard]] Command* CreateCommand(CommandType type);
+        [[nodiscard]] Result<Command*> CreateCommand(CommandType type);
         void DestroyCommand(const Command* command) const;
 
-        [[nodiscard]] CommandRing* CreateCommandRing(QueueType type);
+        [[nodiscard]] Result<CommandRing*> CreateCommandRing(QueueType type);
         void DestroyCommandRing(const CommandRing* command_ring) const;
 
-        [[nodiscard]] ResidencySet* CreateResidencySet();
+        [[nodiscard]] Result<ResidencySet*> CreateResidencySet();
         void DestroyResidencySet(const ResidencySet* residency_set) const;
 
-        [[nodiscard]] Pipeline* CreatePipeline(const ComputePipelineCreateInfo& info);
-        [[nodiscard]] Pipeline* CreatePipeline(const GraphicsPipelineCreateInfo& info);
+        [[nodiscard]] Result<Pipeline*> CreatePipeline(const ComputePipelineCreateInfo& info);
+        [[nodiscard]] Result<Pipeline*> CreatePipeline(const GraphicsPipelineCreateInfo& info);
         void DestroyPipeline(const Pipeline* pipeline);
 
-        [[nodiscard]] Texture* CreateTexture(const TextureCreateInfo& info);
+        [[nodiscard]] Result<Texture*> CreateTexture(const TextureCreateInfo& info);
         void DestroyTexture(const Texture* texture) const;
 
-        [[nodiscard]] TextureView* CreateTextureView(const TextureViewCreateInfo& info);
-        void DestroyTextureView(const TextureView* texture_view) const;
+        [[nodiscard]] Result<Texture*> CreateTextureView(const TextureViewCreateInfo& info);
 
-        [[nodiscard]] Buffer* CreateBuffer(const BufferCreateInfo& info);
+        [[nodiscard]] Result<Buffer*> CreateBuffer(const BufferCreateInfo& info);
         void DestroyBuffer(const Buffer* buffer);
 
-        [[nodiscard]] Sampler* CreateSampler(const SamplerCreateInfo& info);
+        [[nodiscard]] Result<Sampler*> CreateSampler(const SamplerCreateInfo& info);
         void DestroySampler(const Sampler* sampler);
 
         [[nodiscard]] void* GetNativeRootSignature() const;
@@ -67,35 +67,50 @@ namespace RM
             return m_graphics_queue;
         }
 
-        TextureView* GetCurrentBackBuffer();
+        Texture* GetCurrentBackBuffer();
 
-        void NewFrame(Queue* queue);
+        [[nodiscard]] Result<void> NewFrame(Queue* queue);
 
-        void Resize(uint32_t width, uint32_t height);
+        [[nodiscard]] Result<void> Resize(uint32_t width, uint32_t height);
 
         [[nodiscard]] void* GetNativeHandle() const;
 
     private:
-        ResidencySet* m_core_residency_set;
-        Queue* m_graphics_queue;
+        Device() = default;
+        friend Result<Device*> CreateDevice(const DeviceCreateInfo& info);
+        [[nodiscard]] Result<void> Initialize(const DeviceCreateInfo& info);
+        template <typename T, typename... Args>
+        [[nodiscard]] static Result<T*> CreateObject(Args&&... args)
+        {
+            auto* object = new (std::nothrow) T();
+            if (!object) return std::unexpected("Object allocation failed");
+            auto result = object->Initialize(std::forward<Args>(args)...);
+            if (!result)
+            {
+                auto error = std::move(result.error());
+                delete object;
+                return std::unexpected(std::move(error));
+            }
+            return object;
+        }
+        ResidencySet* m_core_residency_set = nullptr;
+        Queue* m_graphics_queue = nullptr;
 
-        [[nodiscard]] uint32_t AddDescriptor(const Buffer* buffer);
-        [[nodiscard]] uint32_t AddDescriptor(const TextureView* texture);
-        [[nodiscard]] uint32_t AddDescriptor(Sampler* sampler);
+        [[nodiscard]] Result<uint32_t> AddDescriptor(const Buffer* buffer);
+        [[nodiscard]] Result<uint32_t> AddDescriptor(Sampler* sampler);
         void RemoveDescriptor(const Buffer* buffer);
-        void RemoveDescriptor(const TextureView* texture);
+        void RemoveDescriptor(const Texture* texture);
         void RemoveDescriptor(const Sampler* sampler);
 
-        void CreateRootSignature();
+        [[nodiscard]] Result<void> CreateRootSignature();
         friend class Command;
         friend class Queue;
         friend class Texture;
-        friend class TextureView;
         friend class Buffer;
         friend class Sampler;
 
 #ifdef RIMERA_MAC
-        [[nodiscard]] uint32_t AddDescriptor(MTL::Texture* texture);
+        [[nodiscard]] Result<uint32_t> AddDescriptor(const Texture* texture);
         [[nodiscard]] NS::SharedPtr<MTL::Buffer> GetArgBuffer() { return m_arg_buffer; }
         [[nodiscard]] NS::SharedPtr<MTL4::ArgumentTable> GetArgTable() { return m_arg_table; }
         NS::SharedPtr<MTL::Device> m_device;
@@ -108,7 +123,7 @@ namespace RM
         NS::SharedPtr<CA::MetalLayer> m_swap_layer;
         CA::MetalDrawable* m_drawable = nullptr;
         IRRootSignature* m_root_sig = nullptr;
-        std::unordered_map<uint64_t, uint32_t> m_swapchain_descriptors{};
+        std::unordered_map<uint64_t, Texture*> m_swapchain_textures{};
         uint32_t m_current_resource = 0;
         std::vector<uint32_t> m_free_resources;
 
@@ -137,14 +152,16 @@ namespace RM
             }
         };
 
+        [[nodiscard]] Result<uint32_t> AddDescriptor(TextureViewType type);
         [[nodiscard]] D3D12_CPU_DESCRIPTOR_HANDLE GetCPUDescriptor(
             TextureViewType type,
             uint32_t index);
         [[nodiscard]] D3D12_GPU_DESCRIPTOR_HANDLE GetGPUDescriptor(
             TextureViewType type,
             uint32_t index);
-        DescriptorHeap CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE heap_type,
-                                            uint32_t count) const;
+        [[nodiscard]] Result<DescriptorHeap> CreateDescriptorHeap(
+            D3D12_DESCRIPTOR_HEAP_TYPE heap_type,
+            uint32_t count) const;
         ComPtr<ID3D12Device15> m_device;
         ComPtr<IDXGIAdapter4> m_adapter;
         ComPtr<IDXGIFactory7> m_factory;
@@ -158,12 +175,11 @@ namespace RM
         struct FrameData
         {
             Texture* swapchain_texture;
-            TextureView* swapchain_rtv;
             Fence* swapchain_fence;
             uint64_t fence_value;
         };
 
-        std::array<FrameData, 3> m_frame_datas;
+        std::array<FrameData, 3> m_frame_datas{};
         uint32_t m_current_frame = 0;
         ComPtr<ID3D12RootSignature> m_root_sig;
         ComPtr<ID3D12InfoQueue1> m_info_queue;

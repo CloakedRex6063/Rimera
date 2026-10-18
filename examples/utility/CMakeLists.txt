@@ -1,4 +1,5 @@
 add_library(Utility ${UTILITY_SOURCES})
+rimera_disable_exceptions(Utility)
 target_include_directories(Utility PUBLIC inc)
 target_link_libraries(Utility PUBLIC Rimera)
 

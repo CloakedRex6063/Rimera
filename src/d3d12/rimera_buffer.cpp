@@ -1,17 +1,16 @@
 #include "rimera_buffer.hpp"
 #include "rimera_d3d12.hpp"
 #include "rimera_device.hpp"
-#include "stdexcept"
 
 RM::Buffer::~Buffer()
 {
-    m_device->RemoveDescriptor(this);
+    if (m_device && m_resource_index != UINT32_MAX) m_device->RemoveDescriptor(this);
     Unmap();
 }
 
 void* RM::Buffer::GetNativeHandle() const noexcept { return m_buffer.Get(); }
 
-void* RM::Buffer::Map()
+RM::Result<void*> RM::Buffer::Map()
 {
     if (m_mapped)
     {
@@ -20,7 +19,7 @@ void* RM::Buffer::Map()
     const auto result = m_buffer->Map(0, nullptr, &m_data);
     if (FAILED(result))
     {
-        throw std::runtime_error("Failed to map buffer");
+        return std::unexpected("Failed to map buffer");
     }
     m_mapped = true;
     return m_data;
@@ -40,8 +39,12 @@ uint64_t RM::Buffer::GetGPUAddress() const
     return m_buffer->GetGPUVirtualAddress();
 }
 
-RM::Buffer::Buffer(Device* device, const BufferCreateInfo& info) : m_device(device)
+RM::Result<void> RM::Buffer::Initialize(Device* device, const BufferCreateInfo& info)
 {
+    m_device = device;
+    if (!device || !info.size) return std::unexpected("Invalid buffer creation parameters");
+    m_length = info.size;
+    m_flags = info.flags;
     auto resource_info = D3D12::GetResourceDesc(info);
 
     if (info.flags & BufferFlags::eUnorderedAccess)
@@ -60,6 +63,17 @@ RM::Buffer::Buffer(Device* device, const BufferCreateInfo& info) : m_device(devi
                                                               IID_PPV_ARGS(&m_buffer));
     if (FAILED(result))
     {
-        throw std::runtime_error("Failed to create buffer");
+        return std::unexpected("Failed to create buffer");
     }
+    if (info.data)
+    {
+        auto mapped = Map();
+        if (!mapped) return std::unexpected(mapped.error());
+        std::memcpy(*mapped, info.data, info.size);
+        Unmap();
+    }
+    auto descriptor = m_device->AddDescriptor(this);
+    if (!descriptor) return std::unexpected(descriptor.error());
+    m_resource_index = *descriptor;
+    return {};
 }

@@ -450,9 +450,11 @@ D3D12_GLOBAL_BARRIER RM::D3D12::ConvertBarrier(const GlobalBarrier& src)
 
 D3D12_TEXTURE_BARRIER RM::D3D12::ConvertBarrier(const TextureBarrier& src)
 {
+#ifdef RIMERA_DEBUG
     assert(src.texture != nullptr);
     assert(src.subresource.num_mips > 0);
     assert(src.subresource.num_array_layers > 0);
+#endif
 
     D3D12_TEXTURE_BARRIER dst{};
     FillScope(dst, src);
@@ -465,9 +467,10 @@ D3D12_TEXTURE_BARRIER RM::D3D12::ConvertBarrier(const TextureBarrier& src)
 
     dst.pResource = static_cast<ID3D12Resource*>(src.texture->GetNativeHandle());
 
-    dst.Subresources.IndexOrFirstMipLevel = src.subresource.first_mip;
+    dst.Subresources.IndexOrFirstMipLevel = src.texture->GetBaseMip() + src.subresource.first_mip;
     dst.Subresources.NumMipLevels = src.subresource.num_mips;
-    dst.Subresources.FirstArraySlice = src.subresource.first_array_layer;
+    dst.Subresources.FirstArraySlice =
+        src.texture->GetBaseLayer() + src.subresource.first_array_layer;
     dst.Subresources.NumArraySlices = src.subresource.num_array_layers;
     dst.Subresources.FirstPlane = 0;
     dst.Subresources.NumPlanes = 1;
@@ -478,7 +481,9 @@ D3D12_TEXTURE_BARRIER RM::D3D12::ConvertBarrier(const TextureBarrier& src)
 
 D3D12_BUFFER_BARRIER RM::D3D12::ConvertBarrier(const BufferBarrier& src)
 {
+#ifdef RIMERA_DEBUG
     assert(src.buffer != nullptr);
+#endif
 
     D3D12_BUFFER_BARRIER dst{};
     FillScope(dst, src);

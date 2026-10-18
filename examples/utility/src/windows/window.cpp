@@ -19,10 +19,10 @@ namespace
         }
     }
 
-    void RegisterWindowClass()
+    RM::Result<void> RegisterWindowClass()
     {
         static bool registered = false;
-        if (registered) return;
+        if (registered) return {};
 
         WNDCLASSEXW wc{};
         wc.cbSize = sizeof(WNDCLASSEXW);
@@ -32,8 +32,9 @@ namespace
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         wc.lpszClassName = WINDOW_CLASS_NAME;
 
-        RegisterClassExW(&wc);
+        if (!RegisterClassExW(&wc)) return std::unexpected("Failed to register window class");
         registered = true;
+        return {};
     }
 
     glm::uvec2 GetWindowClientSize(HWND hwnd)
@@ -52,9 +53,23 @@ namespace
     }
 }
 
-Window::Window()
+RM::Result<Window*> Window::Create()
 {
-    RegisterWindowClass();
+    auto* window = new (std::nothrow) Window();
+    if (!window) return std::unexpected("Window allocation failed");
+    auto result = window->Initialize();
+    if (!result)
+    {
+        auto error = std::move(result.error());
+        delete window;
+        return std::unexpected(std::move(error));
+    }
+    return window;
+}
+
+RM::Result<void> Window::Initialize()
+{
+    if (auto result = RegisterWindowClass(); !result) return std::unexpected(result.error());
 
     constexpr DWORD style = WS_OVERLAPPEDWINDOW;
     RECT window_rect = {
@@ -83,7 +98,7 @@ Window::Window()
         nullptr
         );
 
-    if (hwnd == nullptr) return;
+    if (hwnd == nullptr) return std::unexpected("Failed to create window");
 
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
@@ -91,6 +106,7 @@ Window::Window()
     m_window = hwnd;
     m_running = true;
     m_size = GetWindowClientSize(hwnd);
+    return {};
 }
 
 Window::~Window()

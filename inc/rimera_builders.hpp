@@ -1,5 +1,5 @@
+#pragma once
 #include "rimera_structs.hpp"
-#include "assert.h"
 
 namespace RM
 {
@@ -132,11 +132,10 @@ namespace RM
             m_value.size = size;
         }
 
-        RenderPassBuilder& Color(
-            const TextureView* texture,
-            LoadOp load = LoadOp::Load,
-            StoreOp store = StoreOp::Store,
-            ClearColor clear = {0.f, 0.f, 0.f, 1.f})
+        RenderPassBuilder& Color(const Texture* texture,
+                                 LoadOp load = LoadOp::Load,
+                                 StoreOp store = StoreOp::Store,
+                                 ClearColor clear = {0.f, 0.f, 0.f, 1.f})
         {
             ColorAttachment attachment{};
             attachment.texture = texture;
@@ -148,12 +147,11 @@ namespace RM
             return *this;
         }
 
-        RenderPassBuilder& Depth(
-            const TextureView* texture,
-            LoadOp load = LoadOp::Load,
-            StoreOp store = StoreOp::Store,
-            float clear_depth = 1.f,
-            float clear_stencil = 0.f)
+        RenderPassBuilder& Depth(const Texture* texture,
+                                 LoadOp load = LoadOp::Load,
+                                 StoreOp store = StoreOp::Store,
+                                 float clear_depth = 1.f,
+                                 float clear_stencil = 0.f)
         {
             DepthAttachment attachment{};
             attachment.texture = texture;

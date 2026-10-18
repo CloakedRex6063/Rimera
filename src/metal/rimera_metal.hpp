@@ -1,11 +1,14 @@
 #pragma once
 #include "rimera_device.hpp"
 #include <memory>
+#include <string>
 
 struct IRShaderReflection;
 
 namespace RM::Metal
 {
+    [[nodiscard]] std::string MetalError(const std::string& operation, const NS::Error* error);
+
     struct ShaderReflectionDeleter
     {
         void operator()(IRShaderReflection* reflection) const noexcept;
@@ -19,20 +22,20 @@ namespace RM::Metal
         DispatchGroup compute_dispatch_group{};
     };
 
-    [[nodiscard]] CompiledShader CompileShader(Device* device,
-                                               const ShaderCreateInfo& info,
-                                               ShaderType type);
+    [[nodiscard]] Result<CompiledShader> CompileShader(Device* device,
+                                                       const ShaderCreateInfo& info,
+                                                       ShaderType type);
 
-    MTL::BlendFactor ToBlendFactor(BlendFactor factor);
-    MTL::BlendOperation ToBlendOperation(BlendOp operation);
-    MTL::StencilOperation ToStencilOperation(StencilOp operation);
-    MTL::PrimitiveTopologyClass ToPrimitiveTopologyClass(PolygonMode mode);
-    MTL::CullMode ToCullMode(CullMode mode);
-    MTL::Winding ToWinding(FrontFace face);
-    MTL::TriangleFillMode ToTriangleFillMode(FillMode mode);
-    MTL::VertexFormat ToVertexFormat(Format format);
-    MTL::VertexStepFunction ToVertexStepFunction(VertexInputRate rate);
-    NS::SharedPtr<MTL::VertexDescriptor> CreateVertexDescriptor(
+    [[nodiscard]] Result<MTL::BlendFactor> ToBlendFactor(BlendFactor factor);
+    [[nodiscard]] Result<MTL::BlendOperation> ToBlendOperation(BlendOp operation);
+    [[nodiscard]] Result<MTL::StencilOperation> ToStencilOperation(StencilOp operation);
+    [[nodiscard]] Result<MTL::PrimitiveTopologyClass> ToPrimitiveTopologyClass(PolygonMode mode);
+    [[nodiscard]] Result<MTL::CullMode> ToCullMode(CullMode mode);
+    [[nodiscard]] Result<MTL::Winding> ToWinding(FrontFace face);
+    [[nodiscard]] Result<MTL::TriangleFillMode> ToTriangleFillMode(FillMode mode);
+    [[nodiscard]] Result<MTL::VertexFormat> ToVertexFormat(Format format);
+    [[nodiscard]] Result<MTL::VertexStepFunction> ToVertexStepFunction(VertexInputRate rate);
+    [[nodiscard]] Result<NS::SharedPtr<MTL::VertexDescriptor>> CreateVertexDescriptor(
         const VertexInputState& input,
         const IRShaderReflection* reflection);
 

@@ -40,11 +40,26 @@ namespace
     }
 }
 
-Window::Window()
+RM::Result<Window*> Window::Create()
+{
+    auto* window = new (std::nothrow) Window();
+    if (!window) return std::unexpected("Window allocation failed");
+    auto result = window->Initialize();
+    if (!result)
+    {
+        auto error = std::move(result.error());
+        delete window;
+        return std::unexpected(std::move(error));
+    }
+    return window;
+}
+
+RM::Result<void> Window::Initialize()
 {
     @autoreleasepool
     {
-        if (![NSThread isMainThread]) return;
+        if (![NSThread isMainThread])
+            return std::unexpected("Window creation requires the main thread");
 
         PrepareApplication();
 
@@ -55,7 +70,7 @@ Window::Window()
                                                                styleMask:style
                                                                  backing:NSBackingStoreBuffered
                                                                    defer:NO];
-        if (window == nil) return;
+        if (window == nil) return std::unexpected("Failed to create window");
 
         [window setReleasedWhenClosed:NO];
         [window setTitle:@"Rimera"];
@@ -67,6 +82,7 @@ Window::Window()
         m_running = true;
         m_size = GetWindowSize(window);
     }
+    return {};
 }
 
 Window::~Window()

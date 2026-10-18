@@ -1,4 +1,5 @@
 #pragma once
+#include "rimera_result.hpp"
 
 #include "optional"
 #include "vector"
@@ -7,7 +8,6 @@
 
 namespace RM
 {
-    class TextureView;
     class Buffer;
     class Texture;
 
@@ -110,7 +110,7 @@ namespace RM
 
     struct ColorAttachment
     {
-        const TextureView* texture;
+        const Texture* texture;
         ClearColor clear_color;
         StoreOp store_op;
         LoadOp load_op;
@@ -118,7 +118,7 @@ namespace RM
 
     struct DepthAttachment
     {
-        const TextureView* texture;
+        const Texture* texture;
         float clear_depth;
         float clear_stencil;
         LoadOp load_op;
@@ -549,6 +549,8 @@ namespace RM
         AccelerationStructureCopy = 1u << 7,
         RenderTarget = 1u << 8,
         DepthStencil = 1u << 9,
+        BlitSource = PixelShading,
+        BlitDestination = RenderTarget,
     };
 
     enum class BarrierLayout : uint32_t
@@ -567,6 +569,8 @@ namespace RM
         ResolveSource = 9,
         ResolveDestination = 10,
         ShadingRateSource = 11,
+        BlitSource = ShaderResource,
+        BlitDestination = RenderTarget,
     };
 
     struct BarrierScope

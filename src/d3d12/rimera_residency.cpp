@@ -53,7 +53,9 @@ void* RM::ResidencySet::GetNative() const
     return nullptr;
 }
 
-RM::ResidencySet::ResidencySet(Device* device) : m_device(device)
+RM::Result<void> RM::ResidencySet::Initialize(Device* device)
 {
+    m_device = device;
     m_resources.reserve(100);
+    return {};
 }

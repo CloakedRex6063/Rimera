@@ -1,36 +1,46 @@
 #include "mesh.hpp"
 #include "rimera_device.hpp"
 #include "meshoptimizer.h"
-#include "stdexcept"
 #include "vector"
 
-void BufferDeleter::operator()(RM::Buffer* buffer) const
+RM::Result<RM::Buffer*> Mesh::Upload(const void* data, size_t bytes) const
 {
-    if (buffer) device->DestroyBuffer(buffer);
+    if (!bytes || bytes > UINT32_MAX) return std::unexpected("Invalid mesh buffer size");
+    return m_device->CreateBuffer({.size = static_cast<uint32_t>(bytes), .data = data});
 }
 
-namespace
+RM::Result<Mesh*> Mesh::Create(RM::Device* device,
+                               std::span<const Vertex> vertices,
+                               std::span<const uint32_t> indices,
+                               uint32_t material_index,
+                               uint16_t texture_index)
 {
-    OwnedBuffer Upload(RM::Device* device, const void* data, size_t bytes)
+    auto* object = new Mesh();
+    if (!object) return std::unexpected("Object allocation failed");
+    auto result = object->Initialize(device, vertices, indices, material_index, texture_index);
+    if (!result)
     {
-        if (!bytes || bytes > UINT32_MAX) throw std::runtime_error("Invalid mesh buffer size");
-        return OwnedBuffer(device->CreateBuffer({static_cast<uint32_t>(bytes), data}),
-                           BufferDeleter{device});
+        auto error = std::move(result.error());
+        delete object;
+        return std::unexpected(std::move(error));
     }
+    return object;
 }
 
-Mesh::Mesh(RM::Device* device,
-           std::span<const Vertex> vertices,
-           std::span<const uint32_t> indices,
-           uint32_t material_index,
-           uint16_t texture_index)
-    : m_device(device), m_material_index(material_index), m_texture_index(texture_index)
+RM::Result<void> Mesh::Initialize(RM::Device* device,
+                                  std::span<const Vertex> vertices,
+                                  std::span<const uint32_t> indices,
+                                  uint32_t material_index,
+                                  uint16_t texture_index)
 {
+    m_device = device;
+    m_material_index = material_index;
+    m_texture_index = texture_index;
     if (!device || vertices.empty() || indices.empty() || indices.size() % 3 ||
         vertices.size_bytes() > UINT32_MAX || indices.size_bytes() > UINT32_MAX)
-        throw std::runtime_error("Invalid triangle mesh");
-    for (auto i : indices) if (i >= vertices.size()) throw std::runtime_error(
-        "Mesh index out of range");
+        return std::unexpected("Invalid triangle mesh");
+    for (auto i : indices)
+        if (i >= vertices.size()) return std::unexpected("Mesh index out of range");
     std::vector<unsigned int> remap(vertices.size());
     auto count = meshopt_generateVertexRemap(remap.data(),
                                              indices.data(),
@@ -84,22 +94,37 @@ Mesh::Mesh(RM::Device* device,
     const auto& last = meshlets.back();
     vertex_indices.resize(last.vertex_offset + last.vertex_count);
     triangles.resize(last.triangle_offset + last.triangle_count * 3);
-    m_vertex_buffer = Upload(device, optimized.data(), optimized.size() * sizeof(Vertex));
-    m_vertex_index_buffer = Upload(device,
-                                   vertex_indices.data(),
-                                   vertex_indices.size() * sizeof(unsigned int));
-    m_triangle_buffer = Upload(device, triangles.data(), triangles.size());
-    m_meshlet_buffer = Upload(device, meshlets.data(), meshlets.size() * sizeof(meshopt_Meshlet));
+    auto vertex_buffer_result = Upload(optimized.data(), optimized.size() * sizeof(Vertex));
+    if (!vertex_buffer_result) return std::unexpected(vertex_buffer_result.error());
+    m_vertex_buffer = std::move(*vertex_buffer_result);
+    auto vertex_index_buffer_result =
+        Upload(vertex_indices.data(), vertex_indices.size() * sizeof(unsigned int));
+    if (!vertex_index_buffer_result) return std::unexpected(vertex_index_buffer_result.error());
+    m_vertex_index_buffer = std::move(*vertex_index_buffer_result);
+    auto triangle_buffer_result = Upload(triangles.data(), triangles.size());
+    if (!triangle_buffer_result) return std::unexpected(triangle_buffer_result.error());
+    m_triangle_buffer = std::move(*triangle_buffer_result);
+    auto meshlet_buffer_result =
+        Upload(meshlets.data(), meshlets.size() * sizeof(meshopt_Meshlet));
+    if (!meshlet_buffer_result) return std::unexpected(meshlet_buffer_result.error());
+    m_meshlet_buffer = std::move(*meshlet_buffer_result);
     m_vertex_count = static_cast<uint32_t>(count);
     m_triangle_count = static_cast<uint32_t>(indices.size() / 3);
     m_meshlet_count = static_cast<uint32_t>(meshlet_count);
+    return {};
 }
 
-RM::Buffer* Mesh::GenerateIndexBuffer() const
+RM::Result<RM::Buffer*> Mesh::GenerateIndexBuffer() const
 {
-    const auto* meshlets = static_cast<const meshopt_Meshlet*>(m_meshlet_buffer->Map());
-    const auto* vertices = static_cast<const uint32_t*>(m_vertex_index_buffer->Map());
-    const auto* triangles = static_cast<const uint8_t*>(m_triangle_buffer->Map());
+    auto meshlets_mapped = m_meshlet_buffer->Map();
+    if (!meshlets_mapped) return std::unexpected(meshlets_mapped.error());
+    const auto* meshlets = static_cast<const meshopt_Meshlet*>(*meshlets_mapped);
+    auto vertices_mapped = m_vertex_index_buffer->Map();
+    if (!vertices_mapped) return std::unexpected(vertices_mapped.error());
+    const auto* vertices = static_cast<const uint32_t*>(*vertices_mapped);
+    auto triangles_mapped = m_triangle_buffer->Map();
+    if (!triangles_mapped) return std::unexpected(triangles_mapped.error());
+    const auto* triangles = static_cast<const uint8_t*>(*triangles_mapped);
     std::vector<uint32_t> indices;
     indices.reserve(static_cast<size_t>(m_triangle_count) * 3);
     for (uint32_t i = 0; i < m_meshlet_count; ++i)
@@ -109,5 +134,14 @@ RM::Buffer* Mesh::GenerateIndexBuffer() const
             indices.push_back(vertices[m.vertex_offset + triangles[m.triangle_offset + j]]);
     }
     meshopt_optimizeVertexCache(indices.data(), indices.data(), indices.size(), m_vertex_count);
-    return Upload(m_device, indices.data(), indices.size() * sizeof(uint32_t)).release();
+    return Upload(indices.data(), indices.size() * sizeof(uint32_t));
+}
+
+Mesh::~Mesh()
+{
+    if (!m_device) return;
+    m_device->DestroyBuffer(m_vertex_buffer);
+    m_device->DestroyBuffer(m_vertex_index_buffer);
+    m_device->DestroyBuffer(m_triangle_buffer);
+    m_device->DestroyBuffer(m_meshlet_buffer);
 }

@@ -4,31 +4,35 @@
 #include "metal_irconverter/metal_irconverter.h"
 #define IR_RUNTIME_METALCPP
 #include "metal_irconverter_runtime/metal_irconverter_runtime.h"
-#include "stdexcept"
 #include "string"
 #include "utility"
 
-namespace
+namespace RM::Metal
 {
-    std::pair<IRShaderStage, const char*> ShaderStage(RM::ShaderType type)
+    RM::Result<std::pair<IRShaderStage, const char*>> ShaderStage(RM::ShaderType type)
     {
         switch (type)
         {
-            case RM::ShaderType::Compute: return {IRShaderStageCompute, "compute"};
-            case RM::ShaderType::Vertex: return {IRShaderStageVertex, "vertex"};
-            case RM::ShaderType::Fragment: return {IRShaderStageFragment, "fragment"};
-            case RM::ShaderType::Mesh: return {IRShaderStageMesh, "mesh"};
-            case RM::ShaderType::Amplification: return {IRShaderStageAmplification, "amplification"};
+            case RM::ShaderType::Compute:
+                return std::pair{IRShaderStageCompute, "compute"};
+            case RM::ShaderType::Vertex:
+                return std::pair{IRShaderStageVertex, "vertex"};
+            case RM::ShaderType::Fragment:
+                return std::pair{IRShaderStageFragment, "fragment"};
+            case RM::ShaderType::Mesh:
+                return std::pair{IRShaderStageMesh, "mesh"};
+            case RM::ShaderType::Amplification:
+                return std::pair{IRShaderStageAmplification, "amplification"};
         }
-        throw std::invalid_argument("Unsupported shader type");
+        return std::unexpected("Unsupported shader type");
     }
 
-    std::runtime_error MetalError(const std::string& operation, const NS::Error* error)
+    std::string MetalError(const std::string& operation, const NS::Error* error)
     {
         const auto* description = error ? error->localizedDescription() : nullptr;
         const char* message = description ? description->utf8String() : nullptr;
-        return std::runtime_error(operation + ": " +
-                                  (message ? message : "Metal returned no error description"));
+        return std::string(operation + ": " +
+                           (message ? message : "Metal returned no error description"));
     }
 }
 
@@ -37,22 +41,26 @@ void RM::Metal::ShaderReflectionDeleter::operator()(IRShaderReflection* reflecti
     IRShaderReflectionDestroy(reflection);
 }
 
-RM::Metal::CompiledShader RM::Metal::CompileShader(Device* device,
-                                                  const ShaderCreateInfo& info,
-                                                  ShaderType type)
+RM::Result<RM::Metal::CompiledShader> RM::Metal::CompileShader(Device* device,
+                                                               const ShaderCreateInfo& info,
+                                                               ShaderType type)
 {
-    const auto [stage, stage_name] = ShaderStage(type);
+    auto stage_result = ShaderStage(type);
+    if (!stage_result) return std::unexpected(stage_result.error());
+    const auto [stage, stage_name] = *stage_result;
     const std::string shader_name = std::string(stage_name) + " shader";
-    if (!device) throw std::invalid_argument(shader_name + " creation requires a valid device");
-    if (info.code.empty()) throw std::invalid_argument(shader_name + " HLSL must not be empty");
+    if (!device) return std::unexpected(shader_name + " creation requires a valid device");
+    if (info.code.empty()) return std::unexpected(shader_name + " HLSL must not be empty");
 
     const std::string entry_point(info.entry_point.empty() ? "main" : info.entry_point);
     const auto release_blob = [](IDxcBlob* blob) { blob->Release(); };
-    std::unique_ptr<IDxcBlob, decltype(release_blob)> dxil_blob(
-        Helpers::CompileHlsl(info.code, entry_point, type), release_blob);
+    auto result_dxil_result = Helpers::CompileHlsl(info.code, entry_point, type);
+    if (!result_dxil_result) return std::unexpected(result_dxil_result.error());
+    auto dxil_result = std::move(*result_dxil_result);
+    std::unique_ptr<IDxcBlob, decltype(release_blob)> dxil_blob(dxil_result, release_blob);
     std::unique_ptr<IRCompiler, decltype(&IRCompilerDestroy)> compiler(
         IRCompilerCreate(), IRCompilerDestroy);
-    if (!compiler) throw std::runtime_error("Failed to create Metal shader converter compiler");
+    if (!compiler) return std::unexpected("Failed to create Metal shader converter compiler");
     IRCompilerSetEntryPointName(compiler.get(), entry_point.c_str());
     if (type == ShaderType::Vertex)
         IRCompilerSetStageInGenerationMode(compiler.get(), IRStageInCodeGenerationModeUseMetalVertexFetch);
@@ -61,7 +69,7 @@ RM::Metal::CompiledShader RM::Metal::CompileShader(Device* device,
         IRObjectCreateFromDXIL(static_cast<const uint8_t*>(dxil_blob->GetBufferPointer()),
                                dxil_blob->GetBufferSize(), IRBytecodeOwnershipNone),
         IRObjectDestroy);
-    if (!dxil) throw std::runtime_error("Failed to create DXIL object");
+    if (!dxil) return std::unexpected("Failed to create DXIL object");
     const auto* root_sig = static_cast<IRRootSignature*>(device->GetNativeRootSignature());
     IRCompilerSetGlobalRootSignature(compiler.get(), root_sig);
 
@@ -71,59 +79,63 @@ RM::Metal::CompiledShader RM::Metal::CompileShader(Device* device,
         IRObjectDestroy);
     std::unique_ptr<IRError, decltype(&IRErrorDestroy)> error(converter_error, IRErrorDestroy);
     if (!ir)
-        throw std::runtime_error("DXIL " + shader_name + " conversion failed (converter error " +
-                                 (error ? std::to_string(IRErrorGetCode(error.get())) : "unavailable") + ")");
+        return std::unexpected(
+            "DXIL " + shader_name + " conversion failed (converter error " +
+            (error ? std::to_string(IRErrorGetCode(error.get())) : "unavailable") + ")");
     if (IRObjectGetMetalIRShaderStage(ir.get()) != stage)
-        throw std::runtime_error("DXIL must contain a " + shader_name);
+        return std::unexpected("DXIL must contain a " + shader_name);
 
     CompiledShader result;
     result.reflection.reset(IRShaderReflectionCreate());
-    if (!result.reflection) throw std::runtime_error("Failed to create " + shader_name + " reflection");
+    if (!result.reflection)
+        return std::unexpected("Failed to create " + shader_name + " reflection");
     if (!IRObjectGetReflection(ir.get(), stage, result.reflection.get()))
-        throw std::runtime_error("Failed to obtain " + shader_name + " reflection");
+        return std::unexpected("Failed to obtain " + shader_name + " reflection");
 
     if (type == ShaderType::Compute)
     {
         IRVersionedCSInfo compute_info{};
         if (!IRShaderReflectionCopyComputeInfo(result.reflection.get(), IRReflectionVersion_1_0,
                                                 &compute_info))
-            throw std::runtime_error("Failed to obtain compute shader threadgroup size");
+            return std::unexpected("Failed to obtain compute shader threadgroup size");
         result.compute_dispatch_group = {compute_info.info_1_0.tg_size[0],
                                          compute_info.info_1_0.tg_size[1],
                                          compute_info.info_1_0.tg_size[2]};
         IRShaderReflectionReleaseComputeInfo(&compute_info);
         const auto group = result.compute_dispatch_group;
         if (!group.x || !group.y || !group.z)
-            throw std::runtime_error("Compute shader has an invalid threadgroup size");
+            return std::unexpected("Compute shader has an invalid threadgroup size");
     }
 
     const char* metal_entry_point = IRShaderReflectionGetEntryPointFunctionName(result.reflection.get());
     if (!metal_entry_point || !*metal_entry_point)
-        throw std::runtime_error(shader_name + " reflection has no entry point");
+        return std::unexpected(shader_name + " reflection has no entry point");
 
     std::unique_ptr<IRMetalLibBinary, decltype(&IRMetalLibBinaryDestroy)> binary(
         IRMetalLibBinaryCreate(), IRMetalLibBinaryDestroy);
-    if (!binary) throw std::runtime_error("Failed to create " + shader_name + " metallib object");
+    if (!binary) return std::unexpected("Failed to create " + shader_name + " metallib object");
     if (!IRObjectGetMetalLibBinary(ir.get(), stage, binary.get()))
-        throw std::runtime_error("Failed to extract " + shader_name + " metallib");
+        return std::unexpected("Failed to extract " + shader_name + " metallib");
     const auto bytecode = IRMetalLibGetBytecodeData(binary.get());
     if (!bytecode || !IRMetalLibGetBytecodeSize(binary.get()))
-        throw std::runtime_error(shader_name + " metallib is empty");
+        return std::unexpected(shader_name + " metallib is empty");
 
     auto* native_device = static_cast<MTL::Device*>(device->GetNativeHandle());
     auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
     NS::Error* metal_error = nullptr;
     auto library = NS::TransferPtr(native_device->newLibrary(bytecode, &metal_error));
-    if (!library) throw MetalError("Failed to load " + shader_name + " metallib", metal_error);
+    if (!library)
+        return std::unexpected(
+            MetalError("Failed to load " + shader_name + " metallib", metal_error));
     result.function = NS::TransferPtr(
         library->newFunction(NS::String::string(metal_entry_point, NS::UTF8StringEncoding)));
     if (!result.function)
-        throw std::runtime_error("Metal " + std::string(stage_name) + " entry point not found: " +
-                                 metal_entry_point);
+        return std::unexpected("Metal " + std::string(stage_name) +
+                               " entry point not found: " + metal_entry_point);
     return result;
 }
 
-MTL::BlendFactor RM::Metal::ToBlendFactor(BlendFactor factor)
+RM::Result<MTL::BlendFactor> RM::Metal::ToBlendFactor(BlendFactor factor)
 {
     switch (factor)
     {
@@ -147,10 +159,10 @@ MTL::BlendFactor RM::Metal::ToBlendFactor(BlendFactor factor)
         case BlendFactor::AlphaFactor: return MTL::BlendFactorBlendAlpha;
         case BlendFactor::InvAlphaFactor: return MTL::BlendFactorOneMinusBlendAlpha;
     }
-    throw std::invalid_argument("Unsupported Metal BlendFactor");
+    return std::unexpected("Unsupported Metal BlendFactor");
 }
 
-MTL::BlendOperation RM::Metal::ToBlendOperation(BlendOp operation)
+RM::Result<MTL::BlendOperation> RM::Metal::ToBlendOperation(BlendOp operation)
 {
     switch (operation)
     {
@@ -160,10 +172,10 @@ MTL::BlendOperation RM::Metal::ToBlendOperation(BlendOp operation)
         case BlendOp::Min: return MTL::BlendOperationMin;
         case BlendOp::Max: return MTL::BlendOperationMax;
     }
-    throw std::invalid_argument("Unsupported Metal BlendOp");
+    return std::unexpected("Unsupported Metal BlendOp");
 }
 
-MTL::StencilOperation RM::Metal::ToStencilOperation(StencilOp operation)
+RM::Result<MTL::StencilOperation> RM::Metal::ToStencilOperation(StencilOp operation)
 {
     switch (operation)
     {
@@ -176,10 +188,10 @@ MTL::StencilOperation RM::Metal::ToStencilOperation(StencilOp operation)
         case StencilOp::Increment: return MTL::StencilOperationIncrementWrap;
         case StencilOp::Decrement: return MTL::StencilOperationDecrementWrap;
     }
-    throw std::invalid_argument("Unsupported Metal StencilOp");
+    return std::unexpected("Unsupported Metal StencilOp");
 }
 
-MTL::PrimitiveTopologyClass RM::Metal::ToPrimitiveTopologyClass(PolygonMode mode)
+RM::Result<MTL::PrimitiveTopologyClass> RM::Metal::ToPrimitiveTopologyClass(PolygonMode mode)
 {
     switch (mode)
     {
@@ -187,10 +199,10 @@ MTL::PrimitiveTopologyClass RM::Metal::ToPrimitiveTopologyClass(PolygonMode mode
         case PolygonMode::Line: return MTL::PrimitiveTopologyClassLine;
         case PolygonMode::Triangle: return MTL::PrimitiveTopologyClassTriangle;
     }
-    throw std::invalid_argument("Unsupported Metal PolygonMode");
+    return std::unexpected("Unsupported Metal PolygonMode");
 }
 
-MTL::CullMode RM::Metal::ToCullMode(CullMode mode)
+RM::Result<MTL::CullMode> RM::Metal::ToCullMode(CullMode mode)
 {
     switch (mode)
     {
@@ -198,40 +210,40 @@ MTL::CullMode RM::Metal::ToCullMode(CullMode mode)
         case CullMode::Front: return MTL::CullModeFront;
         case CullMode::None: return MTL::CullModeNone;
     }
-    throw std::invalid_argument("Unsupported Metal CullMode");
+    return std::unexpected("Unsupported Metal CullMode");
 }
 
-MTL::Winding RM::Metal::ToWinding(FrontFace face)
+RM::Result<MTL::Winding> RM::Metal::ToWinding(FrontFace face)
 {
     switch (face)
     {
         case FrontFace::Clockwise: return MTL::WindingClockwise;
         case FrontFace::CounterClockwise: return MTL::WindingCounterClockwise;
     }
-    throw std::invalid_argument("Unsupported Metal FrontFace");
+    return std::unexpected("Unsupported Metal FrontFace");
 }
 
-MTL::TriangleFillMode RM::Metal::ToTriangleFillMode(FillMode mode)
+RM::Result<MTL::TriangleFillMode> RM::Metal::ToTriangleFillMode(FillMode mode)
 {
     switch (mode)
     {
         case FillMode::Wireframe: return MTL::TriangleFillModeLines;
         case FillMode::Solid: return MTL::TriangleFillModeFill;
     }
-    throw std::invalid_argument("Unsupported Metal FillMode");
+    return std::unexpected("Unsupported Metal FillMode");
 }
 
-MTL::VertexStepFunction RM::Metal::ToVertexStepFunction(VertexInputRate rate)
+RM::Result<MTL::VertexStepFunction> RM::Metal::ToVertexStepFunction(VertexInputRate rate)
 {
     switch (rate)
     {
         case VertexInputRate::Vertex: return MTL::VertexStepFunctionPerVertex;
         case VertexInputRate::Instance: return MTL::VertexStepFunctionPerInstance;
     }
-    throw std::invalid_argument("Unsupported Metal VertexInputRate");
+    return std::unexpected("Unsupported Metal VertexInputRate");
 }
 
-MTL::VertexFormat RM::Metal::ToVertexFormat(Format format)
+RM::Result<MTL::VertexFormat> RM::Metal::ToVertexFormat(Format format)
 {
     switch (format)
     {
@@ -277,13 +289,14 @@ MTL::VertexFormat RM::Metal::ToVertexFormat(Format format)
         case Format::RGB9E5_Float: return MTL::VertexFormatFloatRGB9E5;
         default: break;
     }
-    throw std::invalid_argument("Unsupported Metal Format");
+    return std::unexpected("Unsupported Metal Format");
 }
 
-NS::SharedPtr<MTL::VertexDescriptor> RM::Metal::CreateVertexDescriptor(
-    const VertexInputState& input, const IRShaderReflection* reflection)
+RM::Result<NS::SharedPtr<MTL::VertexDescriptor>> RM::Metal::CreateVertexDescriptor(
+    const VertexInputState& input,
+    const IRShaderReflection* reflection)
 {
-    if (!reflection) throw std::invalid_argument("Vertex layout requires shader reflection");
+    if (!reflection) return std::unexpected("Vertex layout requires shader reflection");
     auto descriptor = NS::TransferPtr(MTL::VertexDescriptor::alloc()->init());
     // Metal has 31 vertex buffer slots and 31 attributes. The converter reserves
     // the first kIRVertexBufferBindPoint buffers and kIRStageInAttributeStartIndex attributes.
@@ -292,13 +305,15 @@ NS::SharedPtr<MTL::VertexDescriptor> RM::Metal::CreateVertexDescriptor(
     for (const auto& binding : input.bindings)
     {
         if (binding.binding >= slot_count - kIRVertexBufferBindPoint)
-            throw std::invalid_argument("Vertex buffer binding exceeds Metal's available slots");
+            return std::unexpected("Vertex buffer binding exceeds Metal's available slots");
         const auto index = binding.binding + kIRVertexBufferBindPoint;
-        if (bindings[index]) throw std::invalid_argument("Duplicate vertex buffer binding");
+        if (bindings[index]) return std::unexpected("Duplicate vertex buffer binding");
         bindings[index] = true;
         auto* layout = descriptor->layouts()->object(index);
         layout->setStride(binding.stride);
-        layout->setStepFunction(ToVertexStepFunction(binding.input_rate));
+        auto conversion_0 = ToVertexStepFunction(binding.input_rate);
+        if (!conversion_0) return std::unexpected(conversion_0.error());
+        layout->setStepFunction(*conversion_0);
         layout->setStepRate(1);
     }
 
@@ -314,16 +329,18 @@ NS::SharedPtr<MTL::VertexDescriptor> RM::Metal::CreateVertexDescriptor(
     {
         if (attribute.binding >= slot_count - kIRVertexBufferBindPoint ||
             !bindings[attribute.binding + kIRVertexBufferBindPoint])
-            throw std::invalid_argument("Vertex attribute references a missing binding");
-        ToVertexFormat(attribute.format);
+            return std::unexpected("Vertex attribute references a missing binding");
+        auto conversion_1 = ToVertexFormat(attribute.format);
+        if (!conversion_1) return std::unexpected(conversion_1.error());
+
         if (attribute.semantic.empty() && attribute.location >= slot_count - kIRStageInAttributeStartIndex)
-            throw std::invalid_argument("Vertex attribute location exceeds Metal's available slots");
+            return std::unexpected("Vertex attribute location exceeds Metal's available slots");
         semantics.push_back(semantic_name(attribute.semantic));
     }
 
     IRVersionedVSInfo vertex_info{};
     if (!IRShaderReflectionCopyVertexInfo(reflection, IRReflectionVersion_1_0, &vertex_info))
-        throw std::runtime_error("Failed to obtain vertex shader inputs");
+        return std::unexpected("Failed to obtain vertex shader inputs");
     const auto release_info = [](IRVersionedVSInfo* info) { IRShaderReflectionReleaseVertexInfo(info); };
     const std::unique_ptr<IRVersionedVSInfo, decltype(release_info)> guard(&vertex_info, release_info);
     std::array<bool, slot_count> attributes{};
@@ -331,7 +348,7 @@ NS::SharedPtr<MTL::VertexDescriptor> RM::Metal::CreateVertexDescriptor(
     {
         const auto& shader_input = vertex_info.info_1_0.vertex_inputs[i];
         if (shader_input.attributeIndex >= slot_count - kIRStageInAttributeStartIndex)
-            throw std::invalid_argument("Reflected vertex attribute exceeds Metal's available slots");
+            return std::unexpected("Reflected vertex attribute exceeds Metal's available slots");
         const auto name = semantic_name(shader_input.name ? shader_input.name : "");
         const VertexAttribute* match = nullptr;
         for (size_t j = 0; j < input.attributes.size(); ++j)
@@ -340,16 +357,19 @@ NS::SharedPtr<MTL::VertexDescriptor> RM::Metal::CreateVertexDescriptor(
             // Named HLSL inputs use their semantic; unnamed attributes use location.
             if (semantics[j].empty() ? attribute.location == shader_input.attributeIndex : semantics[j] == name)
             {
-                if (match) throw std::invalid_argument("Duplicate vertex attributes for shader input " + name);
+                if (match)
+                    return std::unexpected("Duplicate vertex attributes for shader input " + name);
                 match = &attribute;
             }
         }
-        if (!match) throw std::invalid_argument("Missing vertex attribute for shader input " + name);
+        if (!match) return std::unexpected("Missing vertex attribute for shader input " + name);
         const auto index = shader_input.attributeIndex + kIRStageInAttributeStartIndex;
-        if (attributes[index]) throw std::invalid_argument("Duplicate reflected vertex attribute");
+        if (attributes[index]) return std::unexpected("Duplicate reflected vertex attribute");
         attributes[index] = true;
         auto* attribute = descriptor->attributes()->object(index);
-        attribute->setFormat(ToVertexFormat(match->format));
+        auto conversion_2 = ToVertexFormat(match->format);
+        if (!conversion_2) return std::unexpected(conversion_2.error());
+        attribute->setFormat(*conversion_2);
         attribute->setOffset(match->offset);
         attribute->setBufferIndex(match->binding + kIRVertexBufferBindPoint);
     }
