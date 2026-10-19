@@ -42,6 +42,7 @@ namespace RM
 
         [[nodiscard]] Result<Pipeline*> CreatePipeline(const ComputePipelineCreateInfo& info);
         [[nodiscard]] Result<Pipeline*> CreatePipeline(const GraphicsPipelineCreateInfo& info);
+        [[nodiscard]] Result<Pipeline*> CreatePipeline(const MeshGraphicsPipelineCreateInfo& info);
         void DestroyPipeline(const Pipeline* pipeline);
 
         [[nodiscard]] Result<Texture*> CreateTexture(const TextureCreateInfo& info);

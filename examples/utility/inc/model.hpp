@@ -33,6 +33,42 @@ public:
     [[nodiscard]] const std::vector<Mesh*>& GetMeshes() const { return m_meshes; }
     [[nodiscard]] const std::vector<Material>& GetMaterials() const { return m_materials; }
     [[nodiscard]] const std::vector<uint32_t>& GetSceneRoots() const { return m_scene_roots; }
+
+    template <class F>
+    [[nodiscard]] RM::Result<void> ForEachMesh(F&& visit) const
+    {
+        auto pending = m_scene_roots;
+        while (!pending.empty())
+        {
+            const auto node_index = pending.back();
+            pending.pop_back();
+            const auto& node = m_nodes[node_index];
+            pending.insert(pending.end(), node.children.begin(), node.children.end());
+            for (const auto mesh_index : node.meshes)
+            {
+                if (auto result = visit(*m_meshes[mesh_index], mesh_index, node_index);
+                    !result)
+                    return std::unexpected(result.error());
+            }
+        }
+        return {};
+    }
+
+    template <class F>
+    [[nodiscard]] RM::Result<void> ForEachMeshlet(F&& visit) const
+    {
+        return ForEachMesh(
+            [&](const Mesh& mesh, uint32_t, uint32_t node_index) -> RM::Result<void>
+            {
+                for (uint32_t meshlet = 0; meshlet < mesh.GetMeshletCount(); ++meshlet)
+                {
+                    if (auto result = visit(mesh, meshlet, node_index); !result)
+                        return std::unexpected(result.error());
+                }
+                return {};
+            });
+    }
+
 private:
     struct SourceVertex;
     struct TangentData;
@@ -41,21 +77,21 @@ private:
     static RM::Result<void> CheckData(const fastgltf::Asset& asset);
     template <class T, class F>
     static RM::Result<bool> ReadAttribute(const fastgltf::Asset& asset,
-                                         const fastgltf::Primitive& primitive,
-                                         std::string_view name,
-                                         size_t count,
-                                         fastgltf::AccessorType type,
-                                         F write);
+                                          const fastgltf::Primitive& primitive,
+                                          std::string_view name,
+                                          size_t count,
+                                          fastgltf::AccessorType type,
+                                          F write);
     static RM::Result<void> ValidateVertex(const SourceVertex& vertex);
     static float PackDirection(const float* direction, glm::vec3 fallback);
     static RM::Result<Vertex> PackVertex(const SourceVertex& source);
     static SourceVertex& Corner(const SMikkTSpaceContext* context, int face, int vertex);
     static RM::Result<void> GenerateTangents(std::vector<SourceVertex>& vertices, unsigned uv);
     static RM::Result<Mesh*> LoadMesh(RM::Device* device,
-                                     const fastgltf::Asset& asset,
-                                     const fastgltf::Primitive& primitive,
-                                     uint32_t material_index,
-                                     const Material& material);
+                                      const fastgltf::Asset& asset,
+                                      const fastgltf::Primitive& primitive,
+                                      uint32_t material_index,
+                                      const Material& material);
     Model() = default;
     RM::Result<void> Initialize(RM::Device* device, const std::filesystem::path& path);
 

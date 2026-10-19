@@ -94,6 +94,7 @@ RM::Result<void> Mesh::Initialize(RM::Device* device,
     const auto& last = meshlets.back();
     vertex_indices.resize(last.vertex_offset + last.vertex_count);
     triangles.resize(last.triangle_offset + last.triangle_count * 3);
+    triangles.resize((triangles.size() + 3) & ~size_t{3});
     auto vertex_buffer_result = Upload(optimized.data(), optimized.size() * sizeof(Vertex));
     if (!vertex_buffer_result) return std::unexpected(vertex_buffer_result.error());
     m_vertex_buffer = std::move(*vertex_buffer_result);

@@ -76,7 +76,7 @@ endif ()
 function(copy_runtime_dlls target)
     if (WIN32)
         set(D3D12_RUNTIME_DIR "${PROJECT_SOURCE_DIR}/external/d3d12")
-        add_custom_target(copy_runtime
+        add_custom_target(copy_runtime_${target}
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_FILE_DIR:${target}>/D3D12"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -87,14 +87,14 @@ function(copy_runtime_dlls target)
                 "$<TARGET_FILE_DIR:${target}>/D3D12"
                 VERBATIM
         )
-        add_dependencies(${target} copy_runtime)
+        add_dependencies(${target} copy_runtime_${target})
     elseif (APPLE)
         get_filename_component(METAL_IRCONVERTER_LIBRARY_DIR "${METAL_IRCONVERTER_LIBRARY}" DIRECTORY)
         set_target_properties(${target} PROPERTIES
                 BUILD_WITH_INSTALL_RPATH TRUE
                 INSTALL_RPATH "@executable_path/../Frameworks;${METAL_IRCONVERTER_LIBRARY_DIR}"
         )
-        add_custom_target(copy_dxc
+        add_custom_target(copy_dxc_${target}
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_BUNDLE_DIR:${target}>/Contents/Frameworks"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -102,7 +102,7 @@ function(copy_runtime_dlls target)
                 "$<TARGET_BUNDLE_DIR:${target}>/Contents/Frameworks"
                 VERBATIM
         )
-        add_dependencies(${target} copy_dxc)
+        add_dependencies(${target} copy_dxc_${target})
     endif ()
 endfunction()
 

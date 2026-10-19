@@ -44,4 +44,4 @@ function(create_example name)
 endfunction()
 
 add_subdirectory(utility)
-add_subdirectory(path_tracer)
+add_subdirectory(mesh_shader)

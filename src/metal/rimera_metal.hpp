@@ -18,8 +18,9 @@ namespace RM::Metal
     {
         NS::SharedPtr<MTL::Function> function;
         std::unique_ptr<IRShaderReflection, ShaderReflectionDeleter> reflection;
-        // Populated only for compute shaders.
+        // Populated for compute, mesh, and amplification shaders.
         DispatchGroup compute_dispatch_group{};
+        uint32_t payload_size = 0;
     };
 
     [[nodiscard]] Result<CompiledShader> CompileShader(Device* device,
@@ -29,6 +30,8 @@ namespace RM::Metal
     [[nodiscard]] Result<MTL::BlendFactor> ToBlendFactor(BlendFactor factor);
     [[nodiscard]] Result<MTL::BlendOperation> ToBlendOperation(BlendOp operation);
     [[nodiscard]] Result<MTL::StencilOperation> ToStencilOperation(StencilOp operation);
+    [[nodiscard]] Result<NS::SharedPtr<MTL::StencilDescriptor>> CreateStencilDescriptor(
+        const StencilOpState& state, const DepthStencilState& depth);
     [[nodiscard]] Result<MTL::PrimitiveTopologyClass> ToPrimitiveTopologyClass(PolygonMode mode);
     [[nodiscard]] Result<MTL::CullMode> ToCullMode(CullMode mode);
     [[nodiscard]] Result<MTL::Winding> ToWinding(FrontFace face);

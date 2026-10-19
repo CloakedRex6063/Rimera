@@ -262,6 +262,11 @@ RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const GraphicsPipelineCreat
     return CreateObject<Pipeline>(this, info);
 }
 
+RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const MeshGraphicsPipelineCreateInfo& info)
+{
+    return CreateObject<Pipeline>(this, info);
+}
+
 void RM::Device::DestroyPipeline(const Pipeline* pipeline)
 {
     delete pipeline;

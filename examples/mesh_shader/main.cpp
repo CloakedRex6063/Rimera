@@ -6,7 +6,7 @@
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/ext/matrix_transform.hpp"
 
-struct PathTracerScene
+struct MeshShaderScene
 {
     struct Transform
     {
@@ -18,13 +18,17 @@ struct PathTracerScene
 
     struct DrawData
     {
+        uint32_t meshlet_index;
         uint32_t vertex_index;
+        uint32_t vertex_indices_index;
+        uint32_t triangle_index;
+        uint32_t meshlet_buffer_index;
         uint32_t transform_index;
         uint32_t material_index;
         uint32_t padding{};
     };
 
-    static_assert(sizeof(DrawData) == 16);
+    static_assert(sizeof(DrawData) == 32);
 
     struct SceneData
     {
@@ -39,15 +43,9 @@ struct PathTracerScene
 
     static_assert(sizeof(SceneData) == 96);
 
-    struct Draw
-    {
-        Mesh* mesh;
-        RM::Buffer* indices;
-    };
-
-    PathTracerScene(RM::Device* device, RM::Texture* texture, Model* model, glm::uvec2 size)
+    MeshShaderScene(RM::Device* device, RM::Texture* texture, Model* model, glm::uvec2 size)
         : device(device), texture(texture), model(model), size(size),
-          residency(device->GetCoreResidencySet()), index_buffers(model->GetMeshes().size())
+          residency(device->GetCoreResidencySet())
     {
     }
 
@@ -56,8 +54,7 @@ struct PathTracerScene
     Model* model;
     glm::uvec2 size;
     RM::ResidencySet* residency;
-    std::vector<Draw> draws;
-    std::vector<RM::Buffer*> index_buffers;
+    uint32_t meshlet_count = 0;
     RM::Buffer* draw_buffer = nullptr;
     RM::Buffer* scene_buffer = nullptr;
     RM::Buffer* transform_buffer = nullptr;
@@ -85,43 +82,42 @@ struct PathTracerScene
     RM::Result<void> Setup()
     {
         for (auto* mesh : model->GetMeshes())
+        {
             residency->AddAllocation(mesh->GetVertexBuffer());
+            residency->AddAllocation(mesh->GetVertexIndexBuffer());
+            residency->AddAllocation(mesh->GetTriangleBuffer());
+            residency->AddAllocation(mesh->GetMeshletBuffer());
+        }
         for (auto* image : model->GetTextures())
             residency->AddAllocation(image->GetTexture());
         auto sampler_result = device->CreateSampler({});
         if (!sampler_result) return std::unexpected(sampler_result.error());
         sampler = *sampler_result;
 
-        std::vector<DrawData> draw_data;
         std::vector<Transform> transforms;
         transforms.reserve(model->GetNodes().size());
         for (const auto& node : model->GetNodes())
             transforms.push_back({node.world_transform,
                                   glm::transpose(glm::inverse(node.world_transform))});
-        auto pending = model->GetSceneRoots();
-        while (!pending.empty())
-        {
-            auto node_index = pending.back();
-            pending.pop_back();
-            const auto& node = model->GetNodes()[node_index];
-            pending.insert(pending.end(), node.children.begin(), node.children.end());
-            for (auto mesh_index : node.meshes)
+        std::vector<DrawData> draw_data;
+        auto visit_result = model->ForEachMeshlet(
+            [&](const Mesh& mesh, uint32_t meshlet, uint32_t node_index) -> RM::Result<void>
             {
-                auto* mesh = model->GetMeshes()[mesh_index];
-                if (!index_buffers[mesh_index])
-                {
-                    auto indices_result = mesh->GenerateIndexBuffer();
-                    if (!indices_result) return std::unexpected(indices_result.error());
-                    index_buffers[mesh_index] = *indices_result;
-                    residency->AddAllocation(*indices_result);
-                }
-                draw_data.push_back({mesh->GetVertexBuffer()->GetResourceIndex(),
-                                     node_index,
-                                     mesh->GetMaterialIndex()});
-                draws.push_back({mesh, index_buffers[mesh_index]});
-            }
-        }
-        if (draws.empty()) return std::unexpected("Model scene contains no drawable meshes");
+                draw_data.push_back({
+                    .meshlet_index = meshlet,
+                    .vertex_index = mesh.GetVertexBuffer()->GetResourceIndex(),
+                    .vertex_indices_index = mesh.GetVertexIndexBuffer()->GetResourceIndex(),
+                    .triangle_index = mesh.GetTriangleBuffer()->GetResourceIndex(),
+                    .meshlet_buffer_index = mesh.GetMeshletBuffer()->GetResourceIndex(),
+                    .transform_index = node_index,
+                    .material_index = mesh.GetMaterialIndex(),
+                });
+                return {};
+            });
+        if (!visit_result) return visit_result;
+        if (draw_data.empty() || draw_data.size() > 65535)
+            return std::unexpected("Model requires between one and 65535 meshlets");
+        meshlet_count = static_cast<uint32_t>(draw_data.size());
         if (auto result = Upload(draw_data, draw_buffer); !result) return result;
         if (auto result = Upload(transforms, transform_buffer); !result) return result;
         if (auto result = Upload(model->GetMaterials(), material_buffer); !result) return result;
@@ -137,12 +133,12 @@ struct PathTracerScene
         constexpr float fov = glm::radians(45.f);
         const auto view = glm::lookAtRH(center + glm::vec3(0, 0, 5), center, glm::vec3(0, 1, 0));
         const auto projection = glm::perspectiveRH_ZO(fov, aspect, .01f, 1000.f);
-        SceneData scene{projection * view,
-                        draw_buffer->GetResourceIndex(),
-                        transform_buffer->GetResourceIndex(),
-                        material_buffer->GetResourceIndex(),
-                        texture_buffer->GetResourceIndex(),
-                        sampler->GetSamplerIndex()};
+        SceneData scene{.view_projection = projection * view,
+                        .draw_buffer_index = draw_buffer->GetResourceIndex(),
+                        .transform_buffer_index = transform_buffer->GetResourceIndex(),
+                        .material_buffer_index = material_buffer->GetResourceIndex(),
+                        .texture_buffer_index = texture_buffer->GetResourceIndex(),
+                        .sampler_index = sampler->GetSamplerIndex()};
         auto scene_buffer_result = device->CreateBuffer({.size = sizeof(scene), .data = &scene});
         if (!scene_buffer_result) return std::unexpected(scene_buffer_result.error());
         scene_buffer = *scene_buffer_result;
@@ -158,18 +154,22 @@ struct PathTracerScene
         depth_texture = *depth_result;
         residency->AddAllocation(depth_texture);
 
-        std::filesystem::path shader_path = FileIO::ResourcePath() + "shaders/model.hlsl";
+        std::filesystem::path shader_path = FileIO::ResourcePath() + "shaders/mesh_model.hlsl";
         auto model_shader = FileIO::Read(shader_path);
         if (!model_shader) return std::unexpected(model_shader.error());
-        auto pipeline_info = RM::GraphicsPipelineBuilder(
-                                 {.code = *model_shader, .entry_point = "VSMain"},
-                                 {.code = *model_shader, .entry_point = "PSMain"})
-                             .AddRenderTarget(texture->GetFormat())
-                             .AddBlendInfo(RM::BlendInfoBuilder().Disable().Build())
-                             .DepthFormat(depth_texture->GetFormat())
-                             .Depth()
-                             .Cull(RM::CullMode::None)
-                             .Build();
+        RM::MeshGraphicsPipelineCreateInfo pipeline_info{
+            .mesh_shader = {.code = *model_shader, .entry_point = "MSMain"},
+            .fragment_shader = {.code = *model_shader, .entry_point = "PSMain"},
+            .rtv_formats = {texture->GetFormat()},
+            .dsv_format = depth_texture->GetFormat(),
+            .depth_stencil_state = {
+                .depth_enable = true,
+                .depth_write_enable = true,
+                .depth_test = RM::ComparisonFunc::Less,
+            },
+            .rasterizer_state = {.cull_mode = RM::CullMode::None},
+            .polygon_mode = RM::PolygonMode::Triangle,
+        };
         auto pipeline_result = device->CreatePipeline(pipeline_info);
         if (!pipeline_result) return std::unexpected(pipeline_result.error());
         pipeline = *pipeline_result;
@@ -183,29 +183,18 @@ struct PathTracerScene
         if (auto result = command->BindConstantBuffer(0, scene_buffer); !result) return result;
         command->SetViewport({.size = {size.x, size.y}, .depth_range = {0, 1}});
         command->SetScissor({.size = {size.x, size.y}});
-        command->SetPrimitiveTopology(RM::PrimitiveTopology::TriangleList);
-        for (uint32_t i = 0; i < draws.size(); ++i)
-        {
-            const auto& draw = draws[i];
-            if (auto result = command->BindIndexBuffer(draw.indices, RM::Format::R32_UInt); !result)
-                return result;
-            if (auto result = command->DrawIndexed(draw.mesh->GetTriangleCount() * 3, 1, 0, 0, i); !
-                result)
-                return result;
-        }
-        return {};
+        return command->DispatchMesh({.x = meshlet_count, .y = 1, .z = 1});
     }
 
     void Cleanup()
     {
-        for (auto* buffer : index_buffers)
-            if (buffer)
-            {
-                residency->RemoveAllocation(buffer);
-                device->DestroyBuffer(buffer);
-            }
         for (auto* mesh : model->GetMeshes())
+        {
             residency->RemoveAllocation(mesh->GetVertexBuffer());
+            residency->RemoveAllocation(mesh->GetVertexIndexBuffer());
+            residency->RemoveAllocation(mesh->GetTriangleBuffer());
+            residency->RemoveAllocation(mesh->GetMeshletBuffer());
+        }
         for (auto* image : model->GetTextures())
             residency->RemoveAllocation(image->GetTexture());
         for (auto* buffer : {draw_buffer, scene_buffer, transform_buffer, material_buffer,
@@ -279,7 +268,7 @@ int main()
     auto* texture = *result_texture;
     device->GetCoreResidencySet()->AddAllocation(texture);
 
-    auto result_model = Model::Create(device, "assets/damaged_helmet.glb");
+    auto result_model = Model::Create(device, "assets/chess.glb");
     if (!result_model)
     {
         std::cerr << result_model.error() << '\n';
@@ -292,7 +281,7 @@ int main()
     }
     auto* model = *result_model;
 
-    PathTracerScene scene(device, texture, model, size);
+    MeshShaderScene scene(device, texture, model, size);
     if (auto result = scene.Setup(); !result)
     {
         std::cerr << result.error() << '\n';
@@ -356,7 +345,14 @@ int main()
                     .Build();
 
         command->BeginRenderPass(rpci);
-        scene.DrawModel(command);
+        if (auto result = scene.DrawModel(command); !result)
+        {
+            std::cerr << result.error() << '\n';
+            exit_code = 1;
+            command->EndRenderPass();
+            command->End();
+            break;
+        }
         command->EndRenderPass();
 
         auto copy_src = RM::TextureBarrierBuilder(texture)

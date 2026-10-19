@@ -2,6 +2,25 @@
 #include "cassert"
 #include "rimera_buffer.hpp"
 #include "rimera_texture.hpp"
+#include "rimera_helpers.hpp"
+
+RM::Result<ComPtr<IDxcBlob>> RM::D3D12::CompileShader(const ShaderCreateInfo& shader,
+                                                        ShaderType type)
+{
+    const std::string entry(shader.entry_point.empty() ? "main" : shader.entry_point);
+    auto result = Helpers::CompileHlsl(shader.code, entry, type);
+    if (!result) return std::unexpected(result.error());
+    ComPtr<IDxcBlob> blob;
+    blob.Attach(*result);
+    return blob;
+}
+
+D3D12_SHADER_BYTECODE RM::D3D12::GetShaderBytecode(const ComPtr<IDxcBlob>& blob)
+{
+    return blob ? D3D12_SHADER_BYTECODE{.pShaderBytecode = blob->GetBufferPointer(),
+                                       .BytecodeLength = blob->GetBufferSize()}
+                : D3D12_SHADER_BYTECODE{};
+}
 
 D3D12_COMMAND_LIST_TYPE RM::D3D12::GetQueueType(QueueType type)
 {
@@ -755,7 +774,7 @@ D3D12_LOGIC_OP RM::D3D12::GetLogicOp(LogicOp op) noexcept
     return D3D12_LOGIC_OP_CLEAR;
 }
 
-namespace
+namespace RM::D3D12
 {
     using RM::Filter;
     using RM::ReductionType;
@@ -916,7 +935,7 @@ D3D12_FILTER RM::D3D12::ToFilter(const Filter min_filter,
                                  const Filter mag_filter,
                                  const ReductionType type) noexcept
 {
-    return EncodeFilter(min_filter, mag_filter, type);
+    return RM::D3D12::EncodeFilter(min_filter, mag_filter, type);
 }
 
 D3D12_TEXTURE_ADDRESS_MODE RM::D3D12::ToWrap(const Wrap wrap) noexcept

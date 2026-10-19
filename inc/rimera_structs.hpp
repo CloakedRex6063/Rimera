@@ -254,6 +254,7 @@ namespace RM
     {
         Compute,
         Graphics,
+        MeshGraphics,
     };
 
     enum class ShaderType
@@ -478,6 +479,12 @@ namespace RM
         ShaderCreateInfo ampl_shader;
         ShaderCreateInfo mesh_shader;
         ShaderCreateInfo fragment_shader;
+        std::vector<Format> rtv_formats;
+        std::optional<Format> dsv_format;
+        std::vector<BlendInfo> blend_infos;
+        DepthStencilState depth_stencil_state{};
+        RasterizerState rasterizer_state{};
+        PolygonMode polygon_mode = PolygonMode::Triangle;
     };
 
     struct BLASGeometryCreateInfo

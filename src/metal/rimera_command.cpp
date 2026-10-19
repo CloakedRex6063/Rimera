@@ -102,7 +102,8 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
     m_pending_barriers.clear();
     
     m_render_encoder->setArgumentTable(m_device->m_arg_table.get(),
-                                       MTL::RenderStageVertex | MTL::RenderStageFragment);
+                                       MTL::RenderStageVertex | MTL::RenderStageFragment |
+                                           MTL::RenderStageObject | MTL::RenderStageMesh);
 }
 
 void RM::Command::EndRenderPass()
@@ -196,6 +197,10 @@ RM::Result<void> RM::Command::BindShader(const Pipeline* shader)
             m_compute_encoder->setComputePipelineState(shader->m_compute_pso.get());
             m_threads_per_compute = shader->GetComputeThreadsPerThreadgroup();
             break;
+        case PipelineType::MeshGraphics:
+            m_threads_per_ampl = shader->GetAmplThreadsPerThreadgroup();
+            m_threads_per_mesh = shader->GetMeshThreadsPerThreadgroup();
+            [[fallthrough]];
         case PipelineType::Graphics:
         {
 #ifdef RIMERA_DEBUG

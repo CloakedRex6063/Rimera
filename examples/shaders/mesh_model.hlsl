@@ -6,10 +6,22 @@ struct Transform
 
 struct DrawData
 {
+    uint meshlet_index;
     uint vertex_index;
+    uint vertex_indices_index;
+    uint triangle_index;
+    uint meshlet_buffer_index;
     uint transform_index;
     uint material_index;
     uint padding;
+};
+
+struct Meshlet
+{
+    uint vertex_offset;
+    uint triangle_offset;
+    uint vertex_count;
+    uint triangle_count;
 };
 
 struct Vertex
@@ -46,7 +58,7 @@ cbuffer Scene : register(b0)
     uint3 padding;
 };
 
-struct VSOut
+struct MeshOutput
 {
     float4 position : SV_Position;
     float2 uv : TEXCOORD0;
@@ -54,28 +66,60 @@ struct VSOut
     float2 emissive_uv : TEXCOORD2;
 };
 
-VSOut VSMain(uint vertex_id : SV_VertexID, uint instance_id : SV_InstanceID)
+uint LoadByte(ByteAddressBuffer buffer, uint offset)
 {
-    StructuredBuffer<DrawData> draws = ResourceDescriptorHeap[draw_buffer_index];
-    DrawData draw = draws.Load(instance_id);
-    StructuredBuffer<Transform> transforms = ResourceDescriptorHeap[transform_buffer_index];
-    Transform transform = transforms.Load(draw.transform_index);
-    StructuredBuffer<Material> materials = ResourceDescriptorHeap[material_buffer_index];
-    Material material = materials.Load(draw.material_index);
-    StructuredBuffer<Vertex> vertices = ResourceDescriptorHeap[draw.vertex_index];
-    Vertex vertex = vertices.Load(vertex_id);
-    uint packed_uv = vertex.uv[material.uv_sets & 1];
-    VSOut result;
-    result.position = mul(view_projection, mul(transform.world, float4(vertex.position, 1)));
-    result.uv = float2(f16tof32(packed_uv & 0xffff), f16tof32(packed_uv >> 16));
-    result.material_index = draw.material_index;
-    uint packed_emissive_uv = vertex.uv[(material.uv_sets >> 4) & 1];
-    result.emissive_uv = float2(f16tof32(packed_emissive_uv & 0xffff),
-                                f16tof32(packed_emissive_uv >> 16));
-    return result;
+    return (buffer.Load(offset & ~3u) >> ((offset & 3u) * 8u)) & 0xffu;
 }
 
-float4 PSMain(VSOut input) : SV_Target
+[numthreads(64, 1, 1)]
+[outputtopology("triangle")]
+void MSMain(uint group_index : SV_GroupIndex,
+            uint3 group_id : SV_GroupID,
+            out vertices MeshOutput vertices_out[64],
+            out indices uint3 triangles_out[124])
+{
+    StructuredBuffer<DrawData> draws = ResourceDescriptorHeap[draw_buffer_index];
+    DrawData draw = draws.Load(group_id.x);
+    StructuredBuffer<Meshlet> meshlets =
+        ResourceDescriptorHeap[NonUniformResourceIndex(draw.meshlet_buffer_index)];
+    Meshlet meshlet = meshlets.Load(draw.meshlet_index);
+    SetMeshOutputCounts(meshlet.vertex_count, meshlet.triangle_count);
+
+    StructuredBuffer<Vertex> vertices =
+        ResourceDescriptorHeap[NonUniformResourceIndex(draw.vertex_index)];
+    StructuredBuffer<uint> vertex_indices =
+        ResourceDescriptorHeap[NonUniformResourceIndex(draw.vertex_indices_index)];
+    ByteAddressBuffer triangles =
+        ResourceDescriptorHeap[NonUniformResourceIndex(draw.triangle_index)];
+    StructuredBuffer<Transform> transforms = ResourceDescriptorHeap[transform_buffer_index];
+    StructuredBuffer<Material> materials = ResourceDescriptorHeap[material_buffer_index];
+    Transform transform = transforms.Load(draw.transform_index);
+    Material material = materials.Load(draw.material_index);
+
+    if (group_index < meshlet.vertex_count)
+    {
+        Vertex vertex = vertices.Load(vertex_indices.Load(meshlet.vertex_offset + group_index));
+        MeshOutput output;
+        output.position = mul(view_projection, mul(transform.world, float4(vertex.position, 1)));
+        uint packed_uv = vertex.uv[material.uv_sets & 1];
+        output.uv = float2(f16tof32(packed_uv & 0xffff), f16tof32(packed_uv >> 16));
+        output.material_index = draw.material_index;
+        uint packed_emissive_uv = vertex.uv[(material.uv_sets >> 4) & 1];
+        output.emissive_uv = float2(f16tof32(packed_emissive_uv & 0xffff),
+                                    f16tof32(packed_emissive_uv >> 16));
+        vertices_out[group_index] = output;
+    }
+
+    for (uint primitive = group_index; primitive < meshlet.triangle_count; primitive += 64)
+    {
+        uint offset = meshlet.triangle_offset + primitive * 3;
+        triangles_out[primitive] = uint3(LoadByte(triangles, offset),
+                                        LoadByte(triangles, offset + 1),
+                                        LoadByte(triangles, offset + 2));
+    }
+}
+
+float4 PSMain(MeshOutput input) : SV_Target
 {
     StructuredBuffer<Material> materials = ResourceDescriptorHeap[material_buffer_index];
     Material material = materials.Load(input.material_index);

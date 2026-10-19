@@ -3,6 +3,7 @@
 #include "rimera_d3d12.hpp"
 #include "rimera_device.hpp"
 #include "rimera_helpers.hpp"
+#include "directx/d3dx12.h"
 
 void* RM::Pipeline::GetNativeHandle() const
 {
@@ -120,10 +121,9 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const GraphicsPipeline
                 .SlopeScaledDepthBias = info.rasterizer_state.slope_scaled_depth_bias,
                 .DepthClipEnable = info.rasterizer_state.depth_clip_enable,
                 .MultisampleEnable = info.rasterizer_state.multisample_enable,
-                .AntialiasedLineEnable = info.rasterizer_state.antialiased_line_enable,
-                .ForcedSampleCount = info.rasterizer_state.sample_count,
-                .ConservativeRaster =
-                    D3D12::GetConservativeRaster(info.rasterizer_state.conservative_raster),
+                .AntialiasedLineEnable = false,
+                .ForcedSampleCount = 0,
+                .ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF,
             },
         .DepthStencilState =
             {
@@ -159,9 +159,106 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const GraphicsPipeline
     return {};
 }
 
-RM::Result<void> RM::Pipeline::Initialize(Device*, const MeshGraphicsPipelineCreateInfo&)
+RM::Result<void> RM::Pipeline::Initialize(Device* device, const MeshGraphicsPipelineCreateInfo& info)
 {
-    return std::unexpected("Mesh pipelines are not implemented");
+    if (!device) return std::unexpected("Mesh graphics pipeline requires a valid device");
+    if (info.rtv_formats.size() > 8 || info.blend_infos.size() > info.rtv_formats.size())
+        return std::unexpected("Invalid mesh graphics attachment count");
+    m_device = device;
+    m_type = PipelineType::MeshGraphics;
+
+    ComPtr<IDxcBlob> ampl_blob;
+    if (!info.ampl_shader.code.empty())
+    {
+        auto result = D3D12::CompileShader(info.ampl_shader, ShaderType::Amplification);
+        if (!result) return std::unexpected(result.error());
+        ampl_blob = std::move(*result);
+    }
+    auto mesh_result = D3D12::CompileShader(info.mesh_shader, ShaderType::Mesh);
+    if (!mesh_result) return std::unexpected(mesh_result.error());
+    auto mesh_blob = std::move(*mesh_result);
+    auto frag_result = D3D12::CompileShader(info.fragment_shader, ShaderType::Fragment);
+    if (!frag_result) return std::unexpected(frag_result.error());
+    auto frag_blob = std::move(*frag_result);
+
+    D3D12_BLEND_DESC blend_desc{
+        .AlphaToCoverageEnable = false,
+        .IndependentBlendEnable = true,
+    };
+    for (size_t i = 0; i < info.rtv_formats.size(); ++i)
+    {
+        const auto blend = i < info.blend_infos.size() ? info.blend_infos[i] : BlendInfo{};
+        blend_desc.RenderTarget[i] = {
+            .BlendEnable = blend.blend_enable,
+            .LogicOpEnable = blend.logic_op_enable,
+            .SrcBlend = D3D12::GetBlendFactor(blend.src_color_factor),
+            .DestBlend = D3D12::GetBlendFactor(blend.dst_color_factor),
+            .BlendOp = D3D12::GetBlendOp(blend.color_blend_op),
+            .SrcBlendAlpha = D3D12::GetBlendFactor(blend.src_alpha_factor),
+            .DestBlendAlpha = D3D12::GetBlendFactor(blend.dst_alpha_factor),
+            .BlendOpAlpha = D3D12::GetBlendOp(blend.alpha_blend_op),
+            .LogicOp = D3D12::GetLogicOp(blend.logic_op),
+            .RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL,
+        };
+    }
+
+    const auto& raster = info.rasterizer_state;
+    const D3D12_RASTERIZER_DESC raster_desc{
+        .FillMode = D3D12::GetFillMode(raster.fill_mode),
+        .CullMode = D3D12::GetCullMode(raster.cull_mode),
+        .FrontCounterClockwise = D3D12::GetFrontFace(raster.front_face),
+        .DepthBias = raster.depth_bias,
+        .DepthBiasClamp = raster.depth_bias_clamp,
+        .SlopeScaledDepthBias = raster.slope_scaled_depth_bias,
+        .DepthClipEnable = raster.depth_clip_enable,
+        .MultisampleEnable = raster.multisample_enable,
+        .AntialiasedLineEnable = false,
+        .ForcedSampleCount = 0,
+        .ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF,
+    };
+    const auto& depth = info.depth_stencil_state;
+    const D3D12_DEPTH_STENCIL_DESC depth_desc{
+        .DepthEnable = depth.depth_enable,
+        .DepthWriteMask = D3D12::GetDepthWriteMask(depth.depth_write_enable),
+        .DepthFunc = D3D12::GetComparisonFunc(depth.depth_test),
+        .StencilEnable = depth.stencil_enable,
+        .StencilReadMask = depth.stencil_read_mask,
+        .StencilWriteMask = depth.stencil_write_mask,
+        .FrontFace = D3D12::GetStencilOpDesc(depth.front_stencil_op),
+        .BackFace = D3D12::GetStencilOpDesc(depth.back_stencil_op),
+    };
+    D3DX12_MESH_SHADER_PIPELINE_STATE_DESC mesh_desc{
+        .pRootSignature = static_cast<ID3D12RootSignature*>(device->GetNativeRootSignature()),
+        .AS = D3D12::GetShaderBytecode(ampl_blob),
+        .MS = D3D12::GetShaderBytecode(mesh_blob),
+        .PS = D3D12::GetShaderBytecode(frag_blob),
+        .BlendState = blend_desc,
+        .SampleMask = D3D12_DEFAULT_SAMPLE_MASK,
+        .RasterizerState = raster_desc,
+        .DepthStencilState = depth_desc,
+        .PrimitiveTopologyType = D3D12::GetPolygonMode(info.polygon_mode),
+        .NumRenderTargets = static_cast<UINT>(info.rtv_formats.size()),
+        .DSVFormat = info.dsv_format ? D3D12::GetFormat(*info.dsv_format)
+                                      : DXGI_FORMAT_UNKNOWN,
+        .SampleDesc = {.Count = 1, .Quality = 0},
+        .Flags = D3D12_PIPELINE_STATE_FLAG_NONE,
+    };
+    for (size_t i = 0; i < info.rtv_formats.size(); ++i)
+        mesh_desc.RTVFormats[i] = D3D12::GetFormat(info.rtv_formats[i]);
+
+    CD3DX12_PIPELINE_MESH_STATE_STREAM stream(mesh_desc);
+
+    auto* native_device = static_cast<ID3D12Device*>(device->GetNativeHandle());
+    ComPtr<ID3D12Device2> device2;
+    if (FAILED(native_device->QueryInterface(IID_PPV_ARGS(device2.GetAddressOf()))))
+        return std::unexpected("D3D12 device does not support mesh pipeline creation");
+    D3D12_PIPELINE_STATE_STREAM_DESC desc{
+        .SizeInBytes = sizeof(stream),
+        .pPipelineStateSubobjectStream = &stream,
+    };
+    if (FAILED(device2->CreatePipelineState(&desc, IID_PPV_ARGS(m_pso.GetAddressOf()))))
+        return std::unexpected("Failed to create mesh graphics pipeline");
+    return {};
 }
 
 RM::Result<std::vector<D3D12_INPUT_ELEMENT_DESC>> RM::Pipeline::CreateInputLayout(

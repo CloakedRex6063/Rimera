@@ -123,6 +123,11 @@ RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const GraphicsPipelineCreat
     return CreateObject<Pipeline>(this, info);
 }
 
+RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const MeshGraphicsPipelineCreateInfo& info)
+{
+    return CreateObject<Pipeline>(this, info);
+}
+
 RM::Result<RM::Texture*> RM::Device::CreateTextureView(const TextureViewCreateInfo& info)
 {
     return CreateObject<Texture>(this, info);

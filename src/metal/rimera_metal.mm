@@ -106,6 +106,35 @@ RM::Result<RM::Metal::CompiledShader> RM::Metal::CompileShader(Device* device,
         if (!group.x || !group.y || !group.z)
             return std::unexpected("Compute shader has an invalid threadgroup size");
     }
+    else if (type == ShaderType::Mesh)
+    {
+        IRVersionedMSInfo mesh_info{};
+        if (!IRShaderReflectionCopyMeshInfo(result.reflection.get(), IRReflectionVersion_1_0,
+                                            &mesh_info))
+            return std::unexpected("Failed to obtain mesh shader threadgroup size");
+        result.compute_dispatch_group = {.x = mesh_info.info_1_0.num_threads[0],
+                                         .y = mesh_info.info_1_0.num_threads[1],
+                                         .z = mesh_info.info_1_0.num_threads[2]};
+        IRShaderReflectionReleaseMeshInfo(&mesh_info);
+        const auto group = result.compute_dispatch_group;
+        if (!group.x || !group.y || !group.z)
+            return std::unexpected("Mesh shader has an invalid threadgroup size");
+    }
+    else if (type == ShaderType::Amplification)
+    {
+        IRVersionedASInfo ampl_info{};
+        if (!IRShaderReflectionCopyAmplificationInfo(result.reflection.get(), IRReflectionVersion_1_0,
+                                                     &ampl_info))
+            return std::unexpected("Failed to obtain amplification shader threadgroup size");
+        result.compute_dispatch_group = {.x = ampl_info.info_1_0.num_threads[0],
+                                         .y = ampl_info.info_1_0.num_threads[1],
+                                         .z = ampl_info.info_1_0.num_threads[2]};
+        result.payload_size = ampl_info.info_1_0.max_payload_size_in_bytes;
+        IRShaderReflectionReleaseAmplificationInfo(&ampl_info);
+        const auto group = result.compute_dispatch_group;
+        if (!group.x || !group.y || !group.z)
+            return std::unexpected("Amplification shader has an invalid threadgroup size");
+    }
 
     const char* metal_entry_point = IRShaderReflectionGetEntryPointFunctionName(result.reflection.get());
     if (!metal_entry_point || !*metal_entry_point)
@@ -189,6 +218,25 @@ RM::Result<MTL::StencilOperation> RM::Metal::ToStencilOperation(StencilOp operat
         case StencilOp::Decrement: return MTL::StencilOperationDecrementWrap;
     }
     return std::unexpected("Unsupported Metal StencilOp");
+}
+
+RM::Result<NS::SharedPtr<MTL::StencilDescriptor>> RM::Metal::CreateStencilDescriptor(
+    const StencilOpState& state, const DepthStencilState& depth)
+{
+    auto stencil = NS::TransferPtr(MTL::StencilDescriptor::alloc()->init());
+    stencil->setStencilCompareFunction(ToCompareFunction(state.StencilFunc));
+    auto fail = ToStencilOperation(state.StencilFailOp);
+    if (!fail) return std::unexpected(fail.error());
+    stencil->setStencilFailureOperation(*fail);
+    auto depth_fail = ToStencilOperation(state.StencilDepthFailOp);
+    if (!depth_fail) return std::unexpected(depth_fail.error());
+    stencil->setDepthFailureOperation(*depth_fail);
+    auto pass = ToStencilOperation(state.StencilPassOp);
+    if (!pass) return std::unexpected(pass.error());
+    stencil->setDepthStencilPassOperation(*pass);
+    stencil->setReadMask(depth.stencil_read_mask);
+    stencil->setWriteMask(depth.stencil_write_mask);
+    return stencil;
 }
 
 RM::Result<MTL::PrimitiveTopologyClass> RM::Metal::ToPrimitiveTopologyClass(PolygonMode mode)
