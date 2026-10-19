@@ -9,14 +9,20 @@ file(GLOB_RECURSE RIMERA_SHADER_FILES
 function(copy_assets dest)
     if (APPLE)
         set(asset_destination "$<TARGET_BUNDLE_CONTENT_DIR:${dest}>/Resources/assets")
+        set(shader_destination "$<TARGET_BUNDLE_CONTENT_DIR:${dest}>/Resources/shaders")
     else ()
         set(asset_destination "$<TARGET_FILE_DIR:${dest}>/assets")
+        set(shader_destination "$<TARGET_FILE_DIR:${dest}>/shaders")
     endif ()
     add_custom_command(TARGET ${dest} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_directory
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/assets"
             "${asset_destination}"
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/shaders"
+            "${shader_destination}"
             VERBATIM)
+    set_property(TARGET ${dest} APPEND PROPERTY LINK_DEPENDS ${RIMERA_SHADER_FILES})
 endfunction()
 
 function(create_example name)

@@ -86,12 +86,13 @@ void RM::Command::EndRenderPass()
     m_command_buffer->EndRenderPass();
 }
 
-void RM::Command::Draw(const uint32_t vertex_count,
-                       const uint32_t instance_count,
-                       const uint32_t start_vertex,
-                       const uint32_t start_instance) const
+RM::Result<void> RM::Command::Draw(const uint32_t vertex_count,
+                                   const uint32_t instance_count,
+                                   const uint32_t start_vertex,
+                                   const uint32_t start_instance) const
 {
     m_command_buffer->DrawInstanced(vertex_count, instance_count, start_vertex, start_instance);
+    return {};
 }
 
 RM::Result<void> RM::Command::DrawIndexed(const uint32_t index_count,
@@ -142,9 +143,10 @@ RM::Result<void> RM::Command::BindIndexBuffer(const Buffer* buffer, Format forma
     return {};
 }
 
-void RM::Command::DispatchMesh(const DispatchGroup dispatch_group) const
+RM::Result<void> RM::Command::DispatchMesh(const DispatchGroup dispatch_group) const
 {
     m_command_buffer->DispatchMesh(dispatch_group.x, dispatch_group.y, dispatch_group.z);
+    return {};
 }
 
 void RM::Command::Dispatch(const DispatchGroup dispatch_group)
@@ -380,7 +382,7 @@ RM::Result<void> RM::Command::Blit(const Texture* source,
     SetScissor(dst);
     SetPrimitiveTopology(PrimitiveTopology::TriangleList);
 
-    Draw(3, 1, 0, 0);
+    if (auto result = Draw(3, 1, 0, 0); !result) return std::unexpected(result.error());
     EndRenderPass();
     return {};
 }

@@ -1,4 +1,5 @@
 #include "model.hpp"
+#include "fileio.hpp"
 #include "fastgltf/core.hpp"
 #include "fastgltf/tools.hpp"
 #include "mikktspace.h"
@@ -372,20 +373,6 @@ RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
     return Mesh::Create(device, packed, indices, material_index, material.textures[0]);
 }
 
-#ifdef RIMERA_MAC
-std::string Model::ResourcePath()
-{
-    NS::Bundle* bundle = NS::Bundle::mainBundle();
-    NS::String* path = bundle->resourcePath();
-    return std::string(path->utf8String()) + "/";
-}
-#else
-std::string Model::ResourcePath()
-{
-    return "";
-}
-#endif
-
 RM::Result<Model*> Model::Create(RM::Device* device, const std::filesystem::path& path)
 {
     auto* object = new (std::nothrow) Model();
@@ -403,7 +390,7 @@ RM::Result<Model*> Model::Create(RM::Device* device, const std::filesystem::path
 RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::path& path)
 {
     if (!device) return std::unexpected("Model requires a device");
-    const std::filesystem::path portable_path = ResourcePath() + path.string();
+    const std::filesystem::path portable_path = FileIO::ResourcePath() + path.string();
     fastgltf::Parser parser;
     auto file = fastgltf::GltfDataBuffer::FromPath(portable_path);
     if (file.error() != fastgltf::Error::None)

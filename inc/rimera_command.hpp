@@ -21,22 +21,22 @@ namespace RM
         void BeginRenderPass(const RenderPassCreateInfo& info);
         void EndRenderPass();
 
-        void Draw(uint32_t vertex_count,
-                  uint32_t instance_count,
-                  uint32_t start_vertex,
-                  uint32_t start_instance) const;
-        [[nodiscard]] Result<void> DrawIndexed(uint32_t index_count,
-                                               uint32_t instance_count,
-                                               uint32_t start_index,
-                                               uint32_t start_vertex,
-                                               uint32_t start_instance) const;
+        Result<void> Draw(uint32_t vertex_count,
+                          uint32_t instance_count,
+                          uint32_t start_vertex,
+                          uint32_t start_instance) const;
+        Result<void> DrawIndexed(uint32_t index_count,
+                                 uint32_t instance_count,
+                                 uint32_t start_index,
+                                 uint32_t start_vertex,
+                                 uint32_t start_instance) const;
 
-        void DispatchMesh(DispatchGroup dispatch_group) const;
+        Result<void> DispatchMesh(DispatchGroup dispatch_group) const;
         void Dispatch(DispatchGroup dispatch_group);
 
-        [[nodiscard]] Result<void> BindShader(const Pipeline* shader);
-        [[nodiscard]] Result<void> BindConstantBuffer(uint32_t slot, const Buffer* buffer) const;
-        [[nodiscard]] Result<void> BindIndexBuffer(const Buffer* buffer, Format format);
+        Result<void> BindShader(const Pipeline* shader);
+        Result<void> BindConstantBuffer(uint32_t slot, const Buffer* buffer) const;
+        Result<void> BindIndexBuffer(const Buffer* buffer, Format format);
 
         void Barrier(const BarrierGroup& group);
         void Barrier(std::span<const TextureBarrier> barriers);
@@ -50,10 +50,10 @@ namespace RM
         void SetScissor(const Rect& rect) const;
         void SetPrimitiveTopology(PrimitiveTopology topology);
 
-        [[nodiscard]] Result<void> CopyTexture(const Texture* source, const Texture* dest);
-        [[nodiscard]] Result<void> Blit(const Texture* source,
-                                        const Texture* dest,
-                                        const BlitRegion& region = {});
+        Result<void> CopyTexture(const Texture* source, const Texture* dest);
+        Result<void> Blit(const Texture* source,
+                          const Texture* dest,
+                          const BlitRegion& region = {});
 
         [[nodiscard]] void* GetNativeCommand() const;
         [[nodiscard]] void* GetNativeAllocator() const;

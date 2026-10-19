@@ -111,16 +111,21 @@ void RM::Command::EndRenderPass()
     m_render_encoder = nullptr;
 }
 
-void RM::Command::Draw(uint32_t vertex_count,
-                       uint32_t instance_count,
-                       uint32_t start_vertex,
-                       uint32_t start_instance) const
+RM::Result<void> RM::Command::Draw(uint32_t vertex_count,
+                                   uint32_t instance_count,
+                                   uint32_t start_vertex,
+                                   uint32_t start_instance) const
 {
+#ifdef RIMERA_DEBUG
+    if (!m_render_encoder)
+        return std::unexpected("BeginRenderPass is required before drawing primitives");
+#endif
     m_render_encoder->drawPrimitives(m_primitive_type,
                                      start_vertex,
                                      vertex_count,
                                      instance_count,
                                      start_instance);
+    return {};
 }
 
 RM::Result<void> RM::Command::DrawIndexed(uint32_t index_count,
@@ -400,17 +405,26 @@ RM::Result<void> RM::Command::Blit(const Texture* source,
     SetScissor(dst);
     SetPrimitiveTopology(PrimitiveTopology::TriangleList);
 
+#ifdef RIMERA_DEBUG
+    if (auto result = Draw(3, 1, 0, 0); !result) return std::unexpected(result.error());
+#else
     Draw(3, 1, 0, 0);
+#endif
     EndRenderPass();
     return {};
 }
 
-void RM::Command::DispatchMesh(DispatchGroup dispatch_group) const
+RM::Result<void> RM::Command::DispatchMesh(DispatchGroup dispatch_group) const
 {
+#ifdef RIMERA_DEBUG
+    if (!m_render_encoder)
+        return std::unexpected("BeginRenderPass is required before dispatching mesh threadgroups");
+#endif
     m_render_encoder->drawMeshThreadgroups(
         MTL::Size(dispatch_group.x, dispatch_group.y, dispatch_group.z),
         MTL::Size(m_threads_per_ampl.x, m_threads_per_ampl.y, m_threads_per_ampl.z),
         MTL::Size(m_threads_per_mesh.x, m_threads_per_mesh.y, m_threads_per_mesh.z));
+    return {};
 }
 
 void RM::Command::Dispatch(DispatchGroup dispatch_group)

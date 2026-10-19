@@ -49,9 +49,9 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     m_core_residency_set->Commit();
     m_core_residency_set->RequestResidency();
 
-    auto blit_bgra8_result = Helpers::CreateBlitShader(this, Format::BGRA8_UNorm);
+    auto blit_bgra8_result = Helpers::CreateBlitShader(this, Format::BGRA8_UNorm_sRGB);
     if (!blit_bgra8_result) return std::unexpected(blit_bgra8_result.error());
-    m_blit_pipelines[Format::BGRA8_UNorm] = std::move(*blit_bgra8_result);
+    m_blit_pipelines[Format::BGRA8_UNorm_sRGB] = std::move(*blit_bgra8_result);
     auto blit_hdr_result = Helpers::CreateBlitShader(this, Format::BGRA10_XR_sRGB);
     if (!blit_hdr_result) return std::unexpected(blit_hdr_result.error());
     m_blit_pipelines[Format::BGRA10_XR_sRGB] = std::move(*blit_hdr_result);

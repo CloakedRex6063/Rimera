@@ -172,6 +172,7 @@ RM::Result<IDxcBlob*> RM::Helpers::CompileHlsl(std::string_view source,
         *target,
         L"-HV",
         L"2021",
+        L"-enable-16bit-types",
     };
     const DxcBuffer buffer{source.data(), source.size(), DXC_CP_UTF8};
     if (auto result = CheckDxc(resources.compiler->Compile(&buffer,

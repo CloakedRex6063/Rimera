@@ -56,8 +56,6 @@ private:
                                      const fastgltf::Primitive& primitive,
                                      uint32_t material_index,
                                      const Material& material);
-    static std::string ResourcePath();
-
     Model() = default;
     RM::Result<void> Initialize(RM::Device* device, const std::filesystem::path& path);
 
