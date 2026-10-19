@@ -3,6 +3,7 @@
 #include "model.hpp"
 #include "fileio.hpp"
 #include "rimera_builders.hpp"
+#include "rimera_render_graph.hpp"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/ext/matrix_transform.hpp"
 
@@ -43,14 +44,15 @@ struct MeshShaderScene
 
     static_assert(sizeof(SceneData) == 96);
 
-    MeshShaderScene(RM::Device* device, RM::Texture* texture, Model* model, glm::uvec2 size)
-        : device(device), texture(texture), model(model), size(size),
-          residency(device->GetCoreResidencySet())
+    static constexpr auto kColorFormat = RM::Format::RGBA8_UNorm;
+    static constexpr auto kDepthFormat = RM::Format::Depth32_Float;
+
+    MeshShaderScene(RM::Device* device, Model* model, glm::uvec2 size)
+        : device(device), model(model), size(size), residency(device->GetCoreResidencySet())
     {
     }
 
     RM::Device* device;
-    RM::Texture* texture;
     Model* model;
     glm::uvec2 size;
     RM::ResidencySet* residency;
@@ -60,7 +62,6 @@ struct MeshShaderScene
     RM::Buffer* transform_buffer = nullptr;
     RM::Buffer* material_buffer = nullptr;
     RM::Buffer* texture_buffer = nullptr;
-    RM::Texture* depth_texture = nullptr;
     RM::Pipeline* pipeline = nullptr;
     RM::Sampler* sampler = nullptr;
 
@@ -144,24 +145,14 @@ struct MeshShaderScene
         scene_buffer = *scene_buffer_result;
         residency->AddAllocation(scene_buffer);
 
-        auto depth_result = device->CreateTexture({
-            .width = size.x,
-            .height = size.y,
-            .format = RM::Format::Depth32_Float,
-            .usage = RM::TextureUsage::RenderTarget,
-        });
-        if (!depth_result) return std::unexpected(depth_result.error());
-        depth_texture = *depth_result;
-        residency->AddAllocation(depth_texture);
-
         std::filesystem::path shader_path = FileIO::ResourcePath() + "shaders/mesh_model.hlsl";
         auto model_shader = FileIO::Read(shader_path);
         if (!model_shader) return std::unexpected(model_shader.error());
         RM::MeshGraphicsPipelineCreateInfo pipeline_info{
             .mesh_shader = {.code = *model_shader, .entry_point = "MSMain"},
             .fragment_shader = {.code = *model_shader, .entry_point = "PSMain"},
-            .rtv_formats = {texture->GetFormat()},
-            .dsv_format = depth_texture->GetFormat(),
+            .rtv_formats = {kColorFormat},
+            .dsv_format = kDepthFormat,
             .depth_stencil_state = {
                 .depth_enable = true,
                 .depth_write_enable = true,
@@ -204,16 +195,9 @@ struct MeshShaderScene
                 residency->RemoveAllocation(buffer);
                 device->DestroyBuffer(buffer);
             }
-        if (depth_texture)
-        {
-            residency->RemoveAllocation(depth_texture);
-            device->DestroyTexture(depth_texture);
-        }
         if (pipeline) device->DestroyPipeline(pipeline);
         if (sampler) device->DestroySampler(sampler);
         delete model;
-        residency->RemoveAllocation(texture);
-        device->DestroyTexture(texture);
     }
 };
 
@@ -249,31 +233,23 @@ int main()
         return 1;
     }
     auto* command_ring = *result_command_ring;
-    auto result_texture = device->CreateTexture({
-        .width = size.x,
-        .height = size.y,
-        .mip_levels = 1,
-        .array_layers = 1,
-        .format = RM::Format::RGBA8_UNorm,
-        .usage = {RM::TextureUsage::RenderTarget, RM::TextureUsage::ShaderRead},
-    });
-    if (!result_texture)
+
+    auto result_graph = device->CreateRenderGraph();
+    if (!result_graph)
     {
-        std::cerr << result_texture.error() << '\n';
+        std::cerr << result_graph.error() << '\n';
         device->DestroyCommandRing(command_ring);
         RM::DestroyDevice(device);
         delete window;
         return 1;
     }
-    auto* texture = *result_texture;
-    device->GetCoreResidencySet()->AddAllocation(texture);
+    auto* graph = *result_graph;
 
     auto result_model = Model::Create(device, "assets/chess.glb");
     if (!result_model)
     {
         std::cerr << result_model.error() << '\n';
-        device->GetCoreResidencySet()->RemoveAllocation(texture);
-        device->DestroyTexture(texture);
+        device->DestroyRenderGraph(graph);
         device->DestroyCommandRing(command_ring);
         RM::DestroyDevice(device);
         delete window;
@@ -281,11 +257,12 @@ int main()
     }
     auto* model = *result_model;
 
-    MeshShaderScene scene(device, texture, model, size);
+    MeshShaderScene scene(device, model, size);
     if (auto result = scene.Setup(); !result)
     {
         std::cerr << result.error() << '\n';
         scene.Cleanup();
+        device->DestroyRenderGraph(graph);
         device->DestroyCommandRing(command_ring);
         RM::DestroyDevice(device);
         delete window;
@@ -293,8 +270,7 @@ int main()
     }
 
     int exit_code = 0;
-    auto texture_layout = RM::BarrierLayout::Common;
-    auto depth_layout = RM::BarrierLayout::Common;
+    constexpr RM::ResourceState present{.layout = RM::BarrierLayout::Present};
 
     while (window->IsRunning())
     {
@@ -310,82 +286,45 @@ int main()
         }
 
         auto* command = command_ring->GetCurrent();
-        auto* backbuffer = device->GetCurrentBackBuffer();
 
         command->Begin();
 
-        auto rt_barrier = RM::TextureBarrierBuilder(texture)
-                          .BeforeLayout(texture_layout)
-                          .AfterLayout(RM::BarrierLayout::RenderTarget)
-                          .BeforeStage(RM::BarrierStage::None)
-                          .BeforeAccess(RM::BarrierAccess::NoAccess)
-                          .AfterStage(RM::BarrierStage::RenderTarget)
-                          .AfterAccess(RM::BarrierAccess::RenderTarget)
-                          .Build();
+        auto output = graph->ImportTexture(device->GetCurrentBackBuffer(), present, present);
+        auto color = graph->CreateTexture(
+            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kColorFormat).Build(),
+            "color");
+        auto depth = graph->CreateTexture(
+            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kDepthFormat).Build(),
+            "depth");
 
-        command->Barrier(rt_barrier);
+        graph->AddRenderPass("Scene")
+             .Color(color,
+                    RM::LoadOp::Clear,
+                    RM::StoreOp::Store,
+                    {.r = 0.392157, .g = 0.584314, .b = 0.929412, .a = 1.0})
+             .Depth(depth, RM::LoadOp::Clear, RM::StoreOp::DontCare)
+             .Execute([&](const RM::RenderGraphContext& context)
+             {
+                 return scene.DrawModel(context.GetCommand());
+             });
 
-        auto ds_barrier = RM::TextureBarrierBuilder(scene.depth_texture)
-                          .BeforeLayout(depth_layout)
-                          .AfterLayout(RM::BarrierLayout::DepthStencilWrite)
-                          .BeforeStage(RM::BarrierStage::None)
-                          .BeforeAccess(RM::BarrierAccess::NoAccess)
-                          .AfterStage(RM::BarrierStage::DepthStencil)
-                          .AfterAccess(RM::BarrierAccess::DepthStencilWrite)
-                          .Build();
+        graph->AddCopyPass("Backbuffer Blit")
+             .BlitSource(color)
+             .BlitDestination(output)
+             .Execute(
+                 [&](const RM::RenderGraphContext& context)
+                 {
+                     return context.GetCommand()->Blit(context.GetTexture(color),
+                                                       context.GetTexture(output));
+                 });
 
-        command->Barrier(ds_barrier);
-
-        auto rpci = RM::RenderPassBuilder({size.x, size.y})
-                    .Color(texture,
-                           RM::LoadOp::Clear,
-                           RM::StoreOp::Store,
-                           {.r = 0.392157, .g = 0.584314, .b = 0.929412, .a = 1.0})
-                    .Depth(scene.depth_texture, RM::LoadOp::Clear, RM::StoreOp::Store)
-                    .Build();
-
-        command->BeginRenderPass(rpci);
-        if (auto result = scene.DrawModel(command); !result)
+        if (auto result = graph->Execute(command); !result)
         {
             std::cerr << result.error() << '\n';
             exit_code = 1;
-            command->EndRenderPass();
             command->End();
             break;
         }
-        command->EndRenderPass();
-
-        auto copy_src = RM::TextureBarrierBuilder(texture)
-                        .BeforeLayout(RM::BarrierLayout::RenderTarget)
-                        .AfterLayout(RM::BarrierLayout::BlitSource)
-                        .BeforeStage(RM::BarrierStage::RenderTarget)
-                        .AfterStage(RM::BarrierStage::BlitSource)
-                        .BeforeAccess(RM::BarrierAccess::RenderTarget)
-                        .AfterAccess(RM::BarrierAccess::ShaderResource)
-                        .Build();
-
-        auto copy_dst = RM::TextureBarrierBuilder(backbuffer)
-                        .BeforeLayout(RM::BarrierLayout::Present)
-                        .AfterLayout(RM::BarrierLayout::BlitDestination)
-                        .BeforeStage(RM::BarrierStage::None)
-                        .AfterStage(RM::BarrierStage::BlitDestination)
-                        .BeforeAccess(RM::BarrierAccess::NoAccess)
-                        .AfterAccess(RM::BarrierAccess::RenderTarget)
-                        .Build();
-
-        command->Barrier(std::array{copy_src, copy_dst});
-        command->Blit(texture, backbuffer);
-
-        auto present_barrier = RM::TextureBarrierBuilder(backbuffer)
-                               .BeforeLayout(RM::BarrierLayout::BlitDestination)
-                               .AfterLayout(RM::BarrierLayout::Present)
-                               .BeforeStage(RM::BarrierStage::BlitDestination)
-                               .BeforeAccess(RM::BarrierAccess::RenderTarget)
-                               .AfterStage(RM::BarrierStage::None)
-                               .AfterAccess(RM::BarrierAccess::NoAccess)
-                               .Build();
-
-        command->Barrier(present_barrier);
 
         command->End();
 
@@ -398,8 +337,6 @@ int main()
             break;
         }
 
-        texture_layout = RM::BarrierLayout::BlitSource;
-        depth_layout = RM::BarrierLayout::DepthStencilWrite;
         command_ring->Next();
     }
     if (auto result = device->GetGraphicsQueue()->WaitIdle(); !result)
@@ -407,6 +344,7 @@ int main()
         std::cerr << result.error() << '\n';
         exit_code = 1;
     }
+    device->DestroyRenderGraph(graph);
     scene.Cleanup();
     device->DestroyCommandRing(command_ring);
     RM::DestroyDevice(device);

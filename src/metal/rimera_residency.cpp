@@ -2,6 +2,7 @@
 
 #include "rimera_buffer.hpp"
 #include "rimera_device.hpp"
+#include "rimera_heap.hpp"
 #include "rimera_texture.hpp"
 
 namespace RM
@@ -42,19 +43,29 @@ namespace RM
         m_residency_set->removeAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
     }
 
+    void ResidencySet::AddAllocation(Heap* heap)
+    {
+        m_residency_set->addAllocation(static_cast<MTL::Heap*>(heap->GetNativeHandle()));
+    }
+
+    void ResidencySet::RemoveAllocation(const Heap* heap)
+    {
+        m_residency_set->removeAllocation(static_cast<MTL::Heap*>(heap->GetNativeHandle()));
+    }
+
     void ResidencySet::RemoveAllAllocations()
     {
         m_residency_set->removeAllAllocations();
     }
 
-    void ResidencySet::AddAllocation(const MTL::Resource* resource) const
+    void ResidencySet::AddAllocation(const MTL::Allocation* allocation) const
     {
-        m_residency_set->addAllocation(resource);
+        m_residency_set->addAllocation(allocation);
     }
 
-    void ResidencySet::RemoveAllocation(const MTL::Resource* resource) const
+    void ResidencySet::RemoveAllocation(const MTL::Allocation* allocation) const
     {
-        m_residency_set->removeAllocation(resource);
+        m_residency_set->removeAllocation(allocation);
     }
 
     void ResidencySet::Commit() const { m_residency_set->commit(); }

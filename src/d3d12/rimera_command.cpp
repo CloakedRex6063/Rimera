@@ -20,6 +20,7 @@ void RM::Command::Begin()
 #ifdef RIMERA_DEBUG
     m_index_buffer = {};
 #endif
+    m_in_compute_pass = false;
     m_command_allocator->Reset();
 
     m_command_buffer->Reset(m_command_allocator.Get(), nullptr);
@@ -86,6 +87,16 @@ void RM::Command::EndRenderPass()
     m_command_buffer->EndRenderPass();
 }
 
+void RM::Command::BeginComputePass()
+{
+    m_in_compute_pass = true;
+}
+
+void RM::Command::EndComputePass()
+{
+    m_in_compute_pass = false;
+}
+
 RM::Result<void> RM::Command::Draw(const uint32_t vertex_count,
                                    const uint32_t instance_count,
                                    const uint32_t start_vertex,
@@ -149,9 +160,10 @@ RM::Result<void> RM::Command::DispatchMesh(const DispatchGroup dispatch_group) c
     return {};
 }
 
-void RM::Command::Dispatch(const DispatchGroup dispatch_group)
+RM::Result<void> RM::Command::Dispatch(const DispatchGroup dispatch_group)
 {
     m_command_buffer->Dispatch(dispatch_group.x, dispatch_group.y, dispatch_group.z);
+    return {};
 }
 
 RM::Result<void> RM::Command::BindShader(const Pipeline* shader)
@@ -167,9 +179,35 @@ RM::Result<void> RM::Command::BindShader(const Pipeline* shader)
 RM::Result<void> RM::Command::BindConstantBuffer(uint32_t slot, const Buffer* buffer) const
 {
 #ifdef RIMERA_DEBUG
-    if (!buffer || slot > 1) return std::unexpected("Invalid constant buffer binding");
+    if (!buffer || slot >= kConstantBufferSlotCount)
+        return std::unexpected("Invalid constant buffer binding");
 #endif
-    m_command_buffer->SetGraphicsRootConstantBufferView(slot, buffer->GetGPUAddress());
+    if (m_in_compute_pass)
+        m_command_buffer->SetComputeRootConstantBufferView(slot, buffer->GetGPUAddress());
+    else
+        m_command_buffer->SetGraphicsRootConstantBufferView(slot, buffer->GetGPUAddress());
+    return {};
+}
+
+RM::Result<void> RM::Command::BindRootConstants(const void* data,
+                                                uint32_t size,
+                                                uint32_t offset) const
+{
+#ifdef RIMERA_DEBUG
+    if (!data || !size || size % 4 || offset % 4 || offset > kRootConstantCount * 4 ||
+        size > kRootConstantCount * 4 - offset)
+        return std::unexpected("Invalid root constants binding");
+#endif
+    if (m_in_compute_pass)
+        m_command_buffer->SetComputeRoot32BitConstants(kRootConstantSlot,
+                                                       size / 4,
+                                                       data,
+                                                       offset / 4);
+    else
+        m_command_buffer->SetGraphicsRoot32BitConstants(kRootConstantSlot,
+                                                        size / 4,
+                                                        data,
+                                                        offset / 4);
     return {};
 }
 
@@ -324,6 +362,34 @@ RM::Result<void> RM::Command::CopyTexture(const Texture* source, const Texture* 
             m_command_buffer->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
         }
     }
+    return {};
+}
+
+RM::Result<void> RM::Command::CopyBuffer(const Buffer* source,
+                                         const Buffer* dest,
+                                         uint64_t source_offset,
+                                         uint64_t dest_offset,
+                                         uint64_t size)
+{
+#ifdef RIMERA_DEBUG
+    if (!source || !dest) return std::unexpected("Cannot copy a null buffer");
+#endif
+    if (size == UINT64_MAX)
+    {
+        if (source_offset > source->GetLength() || dest_offset > dest->GetLength())
+            return std::unexpected("Buffer copy offset is out of bounds");
+        size = std::min(source->GetLength() - source_offset, dest->GetLength() - dest_offset);
+    }
+#ifdef RIMERA_DEBUG
+    if (source_offset > source->GetLength() || size > source->GetLength() - source_offset ||
+        dest_offset > dest->GetLength() || size > dest->GetLength() - dest_offset)
+        return std::unexpected("Buffer copy range is out of bounds");
+#endif
+    m_command_buffer->CopyBufferRegion(static_cast<ID3D12Resource*>(dest->GetNativeHandle()),
+                                       dest_offset,
+                                       static_cast<ID3D12Resource*>(source->GetNativeHandle()),
+                                       source_offset,
+                                       size);
     return {};
 }
 

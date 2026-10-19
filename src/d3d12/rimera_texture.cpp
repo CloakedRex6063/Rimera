@@ -1,11 +1,12 @@
-#include <bit>
 #include "rimera_texture.hpp"
 #include "rimera_d3d12.hpp"
 #include "rimera_device.hpp"
+#include "rimera_heap.hpp"
 
 RM::Texture::~Texture()
 {
     if (m_device) m_device->RemoveDescriptor(this);
+    if (m_heap && m_heap_allocated) m_heap->Free(m_heap_offset);
 }
 
 void* RM::Texture::GetNativeHandle() const noexcept
@@ -22,61 +23,15 @@ RM::UInt2 RM::Texture::GetDimensions() const noexcept
 
 RM::Result<void> RM::Texture::Initialize(Device* device, const TextureCreateInfo& info)
 {
-    if (!device || !info.width || !info.height || !info.mip_levels || !info.array_layers ||
-        info.mip_levels > std::bit_width(std::max(info.width, info.height)) ||
-        info.array_layers > UINT16_MAX || info.format == Format::Unknown)
-        return std::unexpected("Invalid texture creation parameters");
+    if (!device) return std::unexpected("Invalid texture creation parameters");
+    if (auto result = ValidateCreateInfo(info); !result) return std::unexpected(result.error());
 
     m_format = info.format;
     m_usage = info.usage;
     m_mip_count = info.mip_levels;
     m_layer_count = info.array_layers;
     m_device = device;
-    D3D12_RESOURCE_FLAGS flags{};
-
-    if (info.usage.contains(TextureUsage::RenderTarget))
-    {
-        flags |= info.format == Format::Depth16_UNorm || info.format == Format::Depth32_Float ||
-                         info.format == Format::Depth24_UNorm_Stencil8 ||
-                         info.format == Format::Depth32_Float_Stencil8
-                     ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
-                     : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
-    }
-    if (info.usage.contains(TextureUsage::ShaderWrite))
-    {
-        flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-    }
-
-    auto resource_format = D3D12::GetFormat(info.format);
-    switch (info.format)
-    {
-        case Format::Depth16_UNorm:
-            resource_format = DXGI_FORMAT_R16_TYPELESS;
-            break;
-        case Format::Depth32_Float:
-            resource_format = DXGI_FORMAT_R32_TYPELESS;
-            break;
-        case Format::Depth24_UNorm_Stencil8:
-            resource_format = DXGI_FORMAT_R24G8_TYPELESS;
-            break;
-        case Format::Depth32_Float_Stencil8:
-            resource_format = DXGI_FORMAT_R32G8X24_TYPELESS;
-            break;
-        default:
-            break;
-    }
-    const D3D12_RESOURCE_DESC desc{
-        .Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
-        .Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
-        .Width = info.width,
-        .Height = info.height,
-        .DepthOrArraySize = static_cast<uint16_t>(info.array_layers),
-        .MipLevels = static_cast<uint16_t>(info.mip_levels),
-        .Format = resource_format,
-        .SampleDesc = DXGI_SAMPLE_DESC{.Count = 1, .Quality = 0},
-        .Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
-        .Flags = flags,
-    };
+    const auto desc = D3D12::GetResourceDesc(info);
 
     constexpr D3D12MA::ALLOCATION_DESC alloc_desc = {
         .HeapType = D3D12_HEAP_TYPE_DEFAULT,
@@ -88,6 +43,53 @@ RM::Result<void> RM::Texture::Initialize(Device* device, const TextureCreateInfo
                                                               &m_allocation,
                                                               IID_PPV_ARGS(&m_texture));
     if (FAILED(result)) return std::unexpected("D3D12 texture allocation failed");
+    if (auto result = CreateDescriptors(); !result) return std::unexpected(result.error());
+    return {};
+}
+
+RM::Result<void> RM::Texture::Initialize(Device* device,
+                                         Heap* heap,
+                                         uint64_t offset,
+                                         const TextureCreateInfo& info)
+{
+    if (!device || !heap) return std::unexpected("Invalid texture creation parameters");
+    if (auto result = ValidateCreateInfo(info); !result) return std::unexpected(result.error());
+    if (info.initial_data)
+        return std::unexpected("Initial data is not supported for heap allocated textures");
+
+    m_format = info.format;
+    m_usage = info.usage;
+    m_mip_count = info.mip_levels;
+    m_layer_count = info.array_layers;
+    m_device = device;
+    m_heap = heap;
+    m_heap_offset = offset;
+
+    const auto desc = D3D12::GetResourceDesc(info);
+    const D3D12_RESOURCE_DESC1 desc1{
+        .Dimension = desc.Dimension,
+        .Alignment = desc.Alignment,
+        .Width = desc.Width,
+        .Height = desc.Height,
+        .DepthOrArraySize = desc.DepthOrArraySize,
+        .MipLevels = desc.MipLevels,
+        .Format = desc.Format,
+        .SampleDesc = desc.SampleDesc,
+        .Layout = desc.Layout,
+        .Flags = desc.Flags,
+        .SamplerFeedbackMipRegion = {},
+    };
+    auto* native_device = static_cast<ID3D12Device15*>(m_device->GetNativeHandle());
+    const auto result = native_device->CreatePlacedResource2(
+        static_cast<ID3D12Heap*>(heap->GetNativeHandle()),
+        offset,
+        &desc1,
+        D3D12_BARRIER_LAYOUT_COMMON,
+        nullptr,
+        0,
+        nullptr,
+        IID_PPV_ARGS(&m_texture));
+    if (FAILED(result)) return std::unexpected("D3D12 placed texture creation failed");
     if (auto result = CreateDescriptors(); !result) return std::unexpected(result.error());
     return {};
 }

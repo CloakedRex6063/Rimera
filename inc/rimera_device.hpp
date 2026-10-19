@@ -1,6 +1,7 @@
 #pragma once
 #include "unordered_map"
 #include "rimera_buffer.hpp"
+#include "rimera_heap.hpp"
 #include "rimera_structs.hpp"
 #include "rimera_queue.hpp"
 #include "rimera_residency.hpp"
@@ -15,6 +16,7 @@ struct IRRootSignature;
 namespace RM
 {
     class Device;
+    class RenderGraph;
     [[nodiscard]] Result<Device*> CreateDevice(const DeviceCreateInfo& info);
     void DestroyDevice(const Device* device);
 
@@ -55,6 +57,20 @@ namespace RM
 
         [[nodiscard]] Result<Sampler*> CreateSampler(const SamplerCreateInfo& info);
         void DestroySampler(const Sampler* sampler);
+
+        [[nodiscard]] Result<Heap*> CreateHeap(const HeapCreateInfo& info);
+        void DestroyHeap(const Heap* heap) const;
+
+        [[nodiscard]] Result<ResourceAllocationInfo> GetAllocationInfo(
+            const TextureCreateInfo& info,
+            HeapMemory memory = HeapMemory::DeviceLocal) const;
+        [[nodiscard]] Result<ResourceAllocationInfo> GetAllocationInfo(
+            const BufferCreateInfo& info,
+            HeapMemory memory = HeapMemory::DeviceLocal) const;
+
+        [[nodiscard]] Result<RenderGraph*> CreateRenderGraph(
+            const RenderGraphCreateInfo& info = {});
+        void DestroyRenderGraph(const RenderGraph* render_graph) const;
 
         [[nodiscard]] void* GetNativeRootSignature() const;
 
@@ -109,17 +125,14 @@ namespace RM
         friend class Texture;
         friend class Buffer;
         friend class Sampler;
+        friend class Heap;
 
 #ifdef RIMERA_MAC
         [[nodiscard]] Result<uint32_t> AddDescriptor(const Texture* texture);
-        [[nodiscard]] NS::SharedPtr<MTL::Buffer> GetArgBuffer() { return m_arg_buffer; }
-        [[nodiscard]] NS::SharedPtr<MTL4::ArgumentTable> GetArgTable() { return m_arg_table; }
         NS::SharedPtr<MTL::Device> m_device;
         NS::SharedPtr<NS::AutoreleasePool> m_frame_pool;
         NS::SharedPtr<MTL::Buffer> m_resource_descriptor_heap;
         NS::SharedPtr<MTL::Buffer> m_sampler_descriptor_heap;
-        NS::SharedPtr<MTL::Buffer> m_arg_buffer;
-        NS::SharedPtr<MTL4::ArgumentTable> m_arg_table;
         NS::SharedPtr<MTL::Buffer> m_constant_arena;
         NS::SharedPtr<CA::MetalLayer> m_swap_layer;
         CA::MetalDrawable* m_drawable = nullptr;

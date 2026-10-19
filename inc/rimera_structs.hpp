@@ -238,6 +238,24 @@ namespace RM
         EnumFlags<BufferFlags> flags;
     };
 
+    enum class HeapMemory
+    {
+        DeviceLocal,
+        HostVisible,
+    };
+
+    struct HeapCreateInfo
+    {
+        uint64_t size = 0;
+        HeapMemory memory = HeapMemory::DeviceLocal;
+    };
+
+    struct ResourceAllocationInfo
+    {
+        uint64_t size = 0;
+        uint64_t alignment = 0;
+    };
+
     struct RenderPassCreateInfo
     {
         UInt2 size;
@@ -556,6 +574,7 @@ namespace RM
         AccelerationStructureCopy = 1u << 7,
         RenderTarget = 1u << 8,
         DepthStencil = 1u << 9,
+        IndexInput = 1u << 10,
         BlitSource = PixelShading,
         BlitDestination = RenderTarget,
     };
@@ -611,6 +630,7 @@ namespace RM
 
         Texture* texture;
         TextureBarrierSubresource subresource;
+        bool discard = false;
     };
 
     struct BufferBarrier
@@ -713,5 +733,11 @@ namespace RM
         uint32_t mip_count = 1;
         uint32_t base_layer = 0;
         uint32_t layer_count = 1;
+    };
+
+    struct RenderGraphCreateInfo
+    {
+        uint32_t frames_in_flight = 3;
+        uint64_t heap_granularity = 16ull * 1024 * 1024;
     };
 } // namespace RM

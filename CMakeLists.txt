@@ -33,6 +33,10 @@ add_library(Rimera STATIC
         src/rimera_texture.cpp
         inc/rimera_builders.hpp
         inc/rimera_sampler.hpp
+        inc/rimera_heap.hpp
+        inc/rimera_render_graph.hpp
+        src/rimera_heap.cpp
+        src/rimera_render_graph.cpp
 )
 rimera_disable_exceptions(Rimera)
 target_compile_definitions(Rimera PUBLIC
@@ -57,6 +61,7 @@ if (APPLE)
             src/metal/rimera_buffer.cpp
             src/metal/rimera_as.cpp
             src/metal/rimera_sampler.cpp
+            src/metal/rimera_heap.cpp
     )
 elseif (WIN32)
     target_compile_definitions(Rimera PUBLIC RIMERA_WINDOWS)
@@ -73,6 +78,7 @@ elseif (WIN32)
             src/d3d12/rimera_as.cpp
             src/d3d12/rimera_d3d12.hpp
             src/d3d12/rimera_sampler.cpp
+            src/d3d12/rimera_heap.cpp
             src/d3d12/rimera_d3d12.cpp)
 endif ()
 

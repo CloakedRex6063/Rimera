@@ -208,27 +208,25 @@ void* RM::Device::GetNativeHandle() const { return m_device.get(); }
 
 RM::Result<void> RM::Device::CreateRootSignature()
 {
-    IRRootParameter1 params[2]{}; // Bump to 3 when adding push constants
+    IRRootParameter1 params[Command::kConstantBufferSlotCount + 1]{};
+    for (uint32_t slot = 0; slot < Command::kConstantBufferSlotCount; ++slot)
+    {
+        params[slot].ParameterType = IRRootParameterTypeCBV;
+        params[slot].ShaderVisibility = IRShaderVisibilityAll;
+        params[slot].Descriptor.ShaderRegister = slot;
+        params[slot].Descriptor.RegisterSpace = 0;
+    }
 
-    params[0].ParameterType = IRRootParameterTypeCBV;
-    params[0].ShaderVisibility = IRShaderVisibilityAll;
-    params[0].Descriptor.ShaderRegister = 0;
-    params[0].Descriptor.RegisterSpace = 0;
-
-    params[1].ParameterType = IRRootParameterTypeCBV;
-    params[1].ShaderVisibility = IRShaderVisibilityAll;
-    params[1].Descriptor.ShaderRegister = 1;
-    params[1].Descriptor.RegisterSpace = 0;
-
-    // params[2].ParameterType = IRRootParameterType32BitConstants;
-    // params[2].ShaderVisibility = IRShaderVisibilityAll;
-    // params[2].Constants.ShaderRegister = 2;
-    // params[2].Constants.RegisterSpace = 0;
-    // params[2].Constants.Num32BitValues = 4;
+    auto& constants = params[Command::kRootConstantSlot];
+    constants.ParameterType = IRRootParameterType32BitConstants;
+    constants.ShaderVisibility = IRShaderVisibilityAll;
+    constants.Constants.ShaderRegister = Command::kRootConstantSlot;
+    constants.Constants.RegisterSpace = 0;
+    constants.Constants.Num32BitValues = Command::kRootConstantCount;
 
     IRVersionedRootSignatureDescriptor desc{};
     desc.version = IRRootSignatureVersion_1_1;
-    desc.desc_1_1.NumParameters = 2;
+    desc.desc_1_1.NumParameters = Command::kConstantBufferSlotCount + 1;
     desc.desc_1_1.pParameters = params;
     desc.desc_1_1.Flags =
         static_cast<IRRootSignatureFlags>(IRRootSignatureFlagCBVSRVUAVHeapDirectlyIndexed |
@@ -239,22 +237,33 @@ RM::Result<void> RM::Device::CreateRootSignature()
     if (error) IRErrorDestroy(error);
 
     if (!m_root_sig) return std::unexpected("Failed to create root signature");
-
-    m_arg_buffer =
-        NS::TransferPtr(m_device->newBuffer(sizeof(uint64_t) * 2, MTL::ResourceStorageModeShared));
-    auto arg_table_desc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
-    arg_table_desc->setMaxBufferBindCount(3);
-
-    if (!m_arg_buffer) return std::unexpected("Failed to allocate argument buffer");
-    m_core_residency_set->AddAllocation(m_arg_buffer.get());
-
-    NS::Error* arg_error = nullptr;
-    m_arg_table = NS::TransferPtr(m_device->newArgumentTable(arg_table_desc.get(), &arg_error));
-    if (!m_arg_table) return std::unexpected("Failed to create argument table");
-    m_arg_table->setAddress(m_resource_descriptor_heap->gpuAddress(), kIRDescriptorHeapBindPoint);
-    m_arg_table->setAddress(m_sampler_descriptor_heap->gpuAddress(), kIRSamplerHeapBindPoint);
-    m_arg_table->setAddress(m_arg_buffer->gpuAddress(), kIRArgumentBufferBindPoint);
     return {};
+}
+
+RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
+    const TextureCreateInfo& info,
+    HeapMemory memory) const
+{
+    if (auto result = Texture::ValidateCreateInfo(info); !result)
+        return std::unexpected(result.error());
+    auto descriptor = Metal::CreateTextureDescriptor(info);
+    descriptor->setStorageMode(Metal::ToStorageMode(memory));
+    descriptor->setHazardTrackingMode(MTL::HazardTrackingModeUntracked);
+    const auto size_and_align = m_device->heapTextureSizeAndAlign(descriptor.get());
+    return ResourceAllocationInfo{.size = size_and_align.size, .alignment = size_and_align.align};
+}
+
+RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
+    const BufferCreateInfo& info,
+    HeapMemory memory) const
+{
+    if (!info.size) return std::unexpected("Invalid buffer creation parameters");
+    const MTL::ResourceOptions options =
+        (memory == HeapMemory::HostVisible ? MTL::ResourceStorageModeShared
+                                           : MTL::ResourceStorageModePrivate) |
+        MTL::ResourceHazardTrackingModeUntracked;
+    const auto size_and_align = m_device->heapBufferSizeAndAlign(info.size, options);
+    return ResourceAllocationInfo{.size = size_and_align.size, .alignment = size_and_align.align};
 }
 
 RM::Result<uint32_t> RM::Device::AddDescriptor(const Buffer* buffer)

@@ -2,6 +2,7 @@
 #include "rimera_texture.hpp"
 #include "rimera_buffer.hpp"
 #include "rimera_device.hpp"
+#include "rimera_heap.hpp"
 
 RM::ResidencySet::~ResidencySet()
 {
@@ -25,6 +26,16 @@ void RM::ResidencySet::AddAllocation(Buffer* resource)
 void RM::ResidencySet::RemoveAllocation(const Buffer* resource)
 {
     std::erase(m_resources, static_cast<ID3D12Resource*>(resource->GetNativeHandle()));
+}
+
+void RM::ResidencySet::AddAllocation(Heap* heap)
+{
+    m_resources.push_back(static_cast<ID3D12Heap*>(heap->GetNativeHandle()));
+}
+
+void RM::ResidencySet::RemoveAllocation(const Heap* heap)
+{
+    std::erase(m_resources, static_cast<ID3D12Heap*>(heap->GetNativeHandle()));
 }
 
 void RM::ResidencySet::RemoveAllAllocations()

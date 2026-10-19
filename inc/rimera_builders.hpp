@@ -122,6 +122,119 @@ namespace RM
             m_value.subresource = range;
             return *this;
         }
+
+        TextureBarrierBuilder& Discard(bool discard = true)
+        {
+            m_value.discard = discard;
+            return *this;
+        }
+    };
+
+    class TextureBuilder
+    {
+    public:
+        TextureBuilder(uint32_t width, uint32_t height)
+        {
+            m_value.width = width;
+            m_value.height = height;
+        }
+
+        explicit TextureBuilder(UInt2 size) : TextureBuilder(size.x, size.y)
+        {
+        }
+
+        TextureBuilder& Format(RM::Format format)
+        {
+            m_value.format = format;
+            return *this;
+        }
+
+        TextureBuilder& Usage(EnumFlags<TextureUsage> usage)
+        {
+            m_value.usage = usage;
+            return *this;
+        }
+
+        TextureBuilder& Mips(uint32_t mip_levels)
+        {
+            m_value.mip_levels = mip_levels;
+            return *this;
+        }
+
+        TextureBuilder& ArrayLayers(uint32_t array_layers)
+        {
+            m_value.array_layers = array_layers;
+            return *this;
+        }
+
+        TextureBuilder& InitialData(const void* data, uint32_t bytes_per_row)
+        {
+            m_value.initial_data = data;
+            m_value.bytes_per_row = bytes_per_row;
+            return *this;
+        }
+
+        [[nodiscard]] TextureCreateInfo Build() const
+        {
+            return m_value;
+        }
+
+    private:
+        TextureCreateInfo m_value{};
+    };
+
+    class BufferBuilder
+    {
+    public:
+        explicit BufferBuilder(uint32_t size)
+        {
+            m_value.size = size;
+            m_value.data = nullptr;
+            m_value.flags = BufferFlags::eNone;
+        }
+
+        BufferBuilder& Data(const void* data)
+        {
+            m_value.data = data;
+            return *this;
+        }
+
+        BufferBuilder& Flags(EnumFlags<BufferFlags> flags)
+        {
+            m_value.flags = flags;
+            return *this;
+        }
+
+        [[nodiscard]] BufferCreateInfo Build() const
+        {
+            return m_value;
+        }
+
+    private:
+        BufferCreateInfo m_value{};
+    };
+
+    class HeapBuilder
+    {
+    public:
+        explicit HeapBuilder(uint64_t size)
+        {
+            m_value.size = size;
+        }
+
+        HeapBuilder& Memory(HeapMemory memory)
+        {
+            m_value.memory = memory;
+            return *this;
+        }
+
+        [[nodiscard]] HeapCreateInfo Build() const
+        {
+            return m_value;
+        }
+
+    private:
+        HeapCreateInfo m_value{};
     };
 
     class RenderPassBuilder

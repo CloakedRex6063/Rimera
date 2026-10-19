@@ -903,7 +903,9 @@ MTL::Stages RM::Metal::ToBarrierStages(RM::BarrierStage stages)
 {
     const RM::EnumFlags flags(stages);
     MTL::Stages result = 0;
-    if (flags.intersects(RM::BarrierStage::VertexShading)) result |= MTL::StageVertex;
+    if (flags.intersects(RM::BarrierStage::VertexShading) ||
+        flags.intersects(RM::BarrierStage::IndexInput))
+        result |= MTL::StageVertex;
     if (flags.intersects(RM::BarrierStage::PixelShading) ||
         flags.intersects(RM::BarrierStage::RenderTarget) ||
         flags.intersects(RM::BarrierStage::DepthStencil))
@@ -916,4 +918,34 @@ MTL::Stages RM::Metal::ToBarrierStages(RM::BarrierStage stages)
         flags.intersects(RM::BarrierStage::AccelerationStructureCopy))
         result |= MTL::StageAccelerationStructure;
     return result;
+}
+
+MTL::StorageMode RM::Metal::ToStorageMode(HeapMemory memory)
+{
+    switch (memory)
+    {
+        case HeapMemory::DeviceLocal:
+            return MTL::StorageModePrivate;
+        case HeapMemory::HostVisible:
+            return MTL::StorageModeShared;
+    }
+    return MTL::StorageModePrivate;
+}
+
+NS::SharedPtr<MTL::TextureDescriptor> RM::Metal::CreateTextureDescriptor(
+    const TextureCreateInfo& info)
+{
+    auto descriptor = NS::TransferPtr(MTL::TextureDescriptor::alloc()->init());
+    descriptor->setPixelFormat(ToPixelFormat(info.format));
+    descriptor->setHeight(info.height);
+    descriptor->setWidth(info.width);
+    descriptor->setAllowGPUOptimizedContents(true);
+    descriptor->setArrayLength(info.array_layers);
+    descriptor->setMipmapLevelCount(info.mip_levels);
+    descriptor->setTextureType(info.array_layers > 1 ? MTL::TextureType2DArray
+                                                     : MTL::TextureType2D);
+    auto usage = ToTextureUsage(info.usage);
+    usage |= MTL::TextureUsagePixelFormatView;
+    descriptor->setUsage(usage);
+    return descriptor;
 }

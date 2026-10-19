@@ -52,12 +52,68 @@ D3D12_RESOURCE_DESC RM::D3D12::GetResourceDesc(const BufferCreateInfo& info)
     };
 }
 
+D3D12_RESOURCE_DESC RM::D3D12::GetResourceDesc(const TextureCreateInfo& info)
+{
+    D3D12_RESOURCE_FLAGS flags{};
+    if (info.usage.contains(TextureUsage::RenderTarget))
+    {
+        flags |= Helpers::IsDepthStencilFormat(info.format)
+                     ? D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL
+                     : D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+    }
+    if (info.usage.contains(TextureUsage::ShaderWrite))
+    {
+        flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    }
+
+    auto resource_format = GetFormat(info.format);
+    switch (info.format)
+    {
+        case Format::Depth16_UNorm:
+            resource_format = DXGI_FORMAT_R16_TYPELESS;
+            break;
+        case Format::Depth32_Float:
+            resource_format = DXGI_FORMAT_R32_TYPELESS;
+            break;
+        case Format::Depth24_UNorm_Stencil8:
+            resource_format = DXGI_FORMAT_R24G8_TYPELESS;
+            break;
+        case Format::Depth32_Float_Stencil8:
+            resource_format = DXGI_FORMAT_R32G8X24_TYPELESS;
+            break;
+        default:
+            break;
+    }
+    return {
+        .Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+        .Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT,
+        .Width = info.width,
+        .Height = info.height,
+        .DepthOrArraySize = static_cast<uint16_t>(info.array_layers),
+        .MipLevels = static_cast<uint16_t>(info.mip_levels),
+        .Format = resource_format,
+        .SampleDesc = DXGI_SAMPLE_DESC{.Count = 1, .Quality = 0},
+        .Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
+        .Flags = flags,
+    };
+}
+
+D3D12_HEAP_TYPE RM::D3D12::GetHeapType(HeapMemory memory)
+{
+    switch (memory)
+    {
+        case HeapMemory::DeviceLocal:
+            return D3D12_HEAP_TYPE_DEFAULT;
+        case HeapMemory::HostVisible:
+            return D3D12_HEAP_TYPE_GPU_UPLOAD;
+    }
+    return D3D12_HEAP_TYPE_DEFAULT;
+}
+
 DXGI_FORMAT RM::D3D12::GetFormat(const Format& format)
 {
     switch (format)
     {
-        case Format::Invalid:
-            return DXGI_FORMAT_UNKNOWN;
         case Format::A8_UNorm:
             return DXGI_FORMAT_A8_UNORM;
         case Format::R8_UNorm:
@@ -215,7 +271,7 @@ RM::Format RM::D3D12::GetFormat(const DXGI_FORMAT& format)
     switch (format)
     {
         case DXGI_FORMAT_UNKNOWN:
-            return Format::Invalid;
+            return Format::Unknown;
         case DXGI_FORMAT_A8_UNORM:
             return Format::A8_UNorm;
         case DXGI_FORMAT_R8_UNORM:
@@ -345,7 +401,7 @@ RM::Format RM::D3D12::GetFormat(const DXGI_FORMAT& format)
         case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
             return Format::Depth32_Float_Stencil8;
         default:
-            return Format::Invalid;
+            return Format::Unknown;
     }
 }
 
@@ -357,30 +413,24 @@ D3D12_BARRIER_ACCESS RM::D3D12::GetBarrierAccess(BarrierAccess access)
 
 D3D12_BARRIER_SYNC RM::D3D12::GetBarrierSync(BarrierStage stage)
 {
-    switch (stage)
-    {
-        case BarrierStage::None:
-            return D3D12_BARRIER_SYNC_NONE;
-        case BarrierStage::VertexShading:
-        case BarrierStage::AmplificationShading:
-        case BarrierStage::MeshShading:
-            return D3D12_BARRIER_SYNC_VERTEX_SHADING;
-        case BarrierStage::PixelShading:
-            return D3D12_BARRIER_SYNC_PIXEL_SHADING;
-        case BarrierStage::ComputeShading:
-            return D3D12_BARRIER_SYNC_COMPUTE_SHADING;
-        case BarrierStage::Copy:
-            return D3D12_BARRIER_SYNC_COPY;
-        case BarrierStage::AccelerationStructureBuild:
-            return D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE;
-        case BarrierStage::AccelerationStructureCopy:
-            return D3D12_BARRIER_SYNC_COPY_RAYTRACING_ACCELERATION_STRUCTURE;
-        case BarrierStage::RenderTarget:
-            return D3D12_BARRIER_SYNC_RENDER_TARGET;
-        case BarrierStage::DepthStencil:
-            return D3D12_BARRIER_SYNC_DEPTH_STENCIL;
-    }
-    return D3D12_BARRIER_SYNC_NONE;
+    const EnumFlags flags(stage);
+    D3D12_BARRIER_SYNC sync = D3D12_BARRIER_SYNC_NONE;
+    if (flags.intersects({BarrierStage::VertexShading,
+                          BarrierStage::AmplificationShading,
+                          BarrierStage::MeshShading}))
+        sync |= D3D12_BARRIER_SYNC_VERTEX_SHADING;
+    if (flags.intersects(BarrierStage::PixelShading)) sync |= D3D12_BARRIER_SYNC_PIXEL_SHADING;
+    if (flags.intersects(BarrierStage::ComputeShading))
+        sync |= D3D12_BARRIER_SYNC_COMPUTE_SHADING;
+    if (flags.intersects(BarrierStage::Copy)) sync |= D3D12_BARRIER_SYNC_COPY;
+    if (flags.intersects(BarrierStage::AccelerationStructureBuild))
+        sync |= D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE;
+    if (flags.intersects(BarrierStage::AccelerationStructureCopy))
+        sync |= D3D12_BARRIER_SYNC_COPY_RAYTRACING_ACCELERATION_STRUCTURE;
+    if (flags.intersects(BarrierStage::RenderTarget)) sync |= D3D12_BARRIER_SYNC_RENDER_TARGET;
+    if (flags.intersects(BarrierStage::DepthStencil)) sync |= D3D12_BARRIER_SYNC_DEPTH_STENCIL;
+    if (flags.intersects(BarrierStage::IndexInput)) sync |= D3D12_BARRIER_SYNC_INDEX_INPUT;
+    return sync;
 }
 
 D3D12_BARRIER_TYPE RM::D3D12::GetBarrierType(BarrierType type)
@@ -494,7 +544,7 @@ D3D12_TEXTURE_BARRIER RM::D3D12::ConvertBarrier(const TextureBarrier& src)
     dst.Subresources.FirstPlane = 0;
     dst.Subresources.NumPlanes = 1;
 
-    dst.Flags = D3D12_TEXTURE_BARRIER_FLAG_NONE;
+    dst.Flags = src.discard ? D3D12_TEXTURE_BARRIER_FLAG_DISCARD : D3D12_TEXTURE_BARRIER_FLAG_NONE;
     return dst;
 }
 
@@ -554,8 +604,6 @@ D3D12_PRIMITIVE_TOPOLOGY RM::D3D12::GetPrimitiveTopology(PrimitiveTopology topol
             return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
         case PrimitiveTopology::TriangleStrip:
             return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
-        case PrimitiveTopology::TriangleFan:
-            return D3D_PRIMITIVE_TOPOLOGY_TRIANGLEFAN;
     }
     return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 }

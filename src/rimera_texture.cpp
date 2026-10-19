@@ -1,4 +1,14 @@
+#include <bit>
 #include "rimera_texture.hpp"
+
+RM::Result<void> RM::Texture::ValidateCreateInfo(const TextureCreateInfo& info)
+{
+    if (!info.width || !info.height || !info.mip_levels || !info.array_layers ||
+        info.mip_levels > std::bit_width(std::max(info.width, info.height)) ||
+        info.array_layers > UINT16_MAX || info.format == Format::Unknown)
+        return std::unexpected("Invalid texture creation parameters");
+    return {};
+}
 
 RM::Result<void> RM::Texture::ValidateView(const TextureViewCreateInfo& info) const
 {

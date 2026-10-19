@@ -57,4 +57,6 @@ namespace RM::Metal
     NS::SharedPtr<CA::MetalLayer> CreateSwapLayer(NS::SharedPtr<MTL::Device>& device,
                                                   const DeviceCreateInfo& info);
     MTL::Stages ToBarrierStages(BarrierStage stages);
+    MTL::StorageMode ToStorageMode(HeapMemory memory);
+    NS::SharedPtr<MTL::TextureDescriptor> CreateTextureDescriptor(const TextureCreateInfo& info);
 } // namespace RM::Metal

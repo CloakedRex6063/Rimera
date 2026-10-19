@@ -5,6 +5,8 @@
 #include "rimera_metal.hpp"
 #include "rimera_texture.hpp"
 #include "rimera_builders.hpp"
+#define IR_RUNTIME_METALCPP
+#include "metal_irconverter_runtime/metal_irconverter_runtime.h"
 
 RM::Result<void> RM::Command::Initialize(Device* device, QueueType)
 {
@@ -40,6 +42,17 @@ RM::Result<void> RM::Command::Initialize(Device* device, QueueType)
     if (!sampler_result) return std::unexpected(sampler_result.error());
     m_sampler = std::move(*sampler_result);
 
+    auto arg_table_desc = NS::TransferPtr(MTL4::ArgumentTableDescriptor::alloc()->init());
+    arg_table_desc->setMaxBufferBindCount(3);
+    NS::Error* arg_error = nullptr;
+    m_arg_table = NS::TransferPtr(native_device->newArgumentTable(arg_table_desc.get(), &arg_error));
+    if (!m_arg_table) return std::unexpected("Failed to create argument table");
+    m_arg_table->setAddress(m_device->m_resource_descriptor_heap->gpuAddress(),
+                            kIRDescriptorHeapBindPoint);
+    m_arg_table->setAddress(m_device->m_sampler_descriptor_heap->gpuAddress(),
+                            kIRSamplerHeapBindPoint);
+    if (auto result = CreateArgumentBuffer(kInitialArgumentBufferSize); !result) return result;
+
     m_device->GetCoreResidencySet()->AddAllocation(m_blit_buffer);
     m_device->GetCoreResidencySet()->Commit();
     m_device->GetCoreResidencySet()->RequestResidency();
@@ -56,11 +69,29 @@ RM::Command::~Command()
         m_device->DestroyBuffer(m_blit_buffer);
     }
     if (m_sampler) m_device->DestroySampler(m_sampler);
+    m_retired_arg_buffers.push_back(m_arg_buffer);
+    for (auto* buffer : m_retired_arg_buffers)
+    {
+        if (!buffer) continue;
+        m_device->GetCoreResidencySet()->RemoveAllocation(buffer);
+        m_device->DestroyBuffer(buffer);
+    }
+    m_device->GetCoreResidencySet()->Commit();
 }
 
 void RM::Command::Begin()
 {
     m_index_buffer = {};
+    for (auto* buffer : m_retired_arg_buffers)
+    {
+        m_device->GetCoreResidencySet()->RemoveAllocation(buffer);
+        m_device->DestroyBuffer(buffer);
+    }
+    if (!m_retired_arg_buffers.empty()) m_device->GetCoreResidencySet()->Commit();
+    m_retired_arg_buffers.clear();
+    m_arguments.fill(0);
+    m_arguments_dirty = true;
+    m_arg_offset = 0;
     m_command_allocator->reset();
     m_command_buffer->beginCommandBuffer(m_command_allocator.get());
 }
@@ -101,7 +132,7 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
     }
     m_pending_barriers.clear();
     
-    m_render_encoder->setArgumentTable(m_device->m_arg_table.get(),
+    m_render_encoder->setArgumentTable(m_arg_table.get(),
                                        MTL::RenderStageVertex | MTL::RenderStageFragment |
                                            MTL::RenderStageObject | MTL::RenderStageMesh);
 }
@@ -110,6 +141,19 @@ void RM::Command::EndRenderPass()
 {
     m_render_encoder->endEncoding();
     m_render_encoder = nullptr;
+}
+
+void RM::Command::BeginComputePass()
+{
+    if (m_compute_encoder) return;
+    GetComputeEncoder();
+}
+
+void RM::Command::EndComputePass()
+{
+    if (!m_compute_encoder) return;
+    m_compute_encoder->endEncoding();
+    m_compute_encoder = nullptr;
 }
 
 RM::Result<void> RM::Command::Draw(uint32_t vertex_count,
@@ -121,6 +165,7 @@ RM::Result<void> RM::Command::Draw(uint32_t vertex_count,
     if (!m_render_encoder)
         return std::unexpected("BeginRenderPass is required before drawing primitives");
 #endif
+    if (auto result = FlushArguments(); !result) return result;
     m_render_encoder->drawPrimitives(m_primitive_type,
                                      start_vertex,
                                      vertex_count,
@@ -148,6 +193,7 @@ RM::Result<void> RM::Command::DrawIndexed(uint32_t index_count,
     if (offset > m_index_buffer.length || size > m_index_buffer.length - offset)
         return std::unexpected("Indexed draw exceeds the bound index buffer");
 #endif
+    if (auto result = FlushArguments(); !result) return result;
 
     m_render_encoder->drawIndexedPrimitives(m_primitive_type,
                                             index_count,
@@ -239,6 +285,14 @@ void RM::Command::Barrier(const BarrierGroup& group)
 
             if (!src || !dst)
                 continue;
+
+            if (m_compute_encoder)
+            {
+                m_compute_encoder->barrierAfterEncoderStages(src,
+                                                             dst,
+                                                             MTL4::VisibilityOptionDevice);
+                continue;
+            }
 
             auto it = std::ranges::find_if(
                 m_pending_barriers,
@@ -334,14 +388,45 @@ void RM::Command::SetPrimitiveTopology(PrimitiveTopology topology)
 
 RM::Result<void> RM::Command::CopyTexture(const Texture* source, const Texture* dest)
 {
-    GetComputeEncoder();
+    const bool transient = !m_compute_encoder;
+    if (transient) GetComputeEncoder();
     const auto* src = static_cast<MTL::Texture*>(source->GetNativeHandle());
     const auto* dst = static_cast<MTL::Texture*>(dest->GetNativeHandle());
 
     m_compute_encoder->copyFromTexture(src, dst);
 
-    m_compute_encoder->endEncoding();
-    m_compute_encoder = nullptr;
+    EndTransientComputeEncoder(transient);
+    return {};
+}
+
+RM::Result<void> RM::Command::CopyBuffer(const Buffer* source,
+                                         const Buffer* dest,
+                                         uint64_t source_offset,
+                                         uint64_t dest_offset,
+                                         uint64_t size)
+{
+#ifdef RIMERA_DEBUG
+    if (!source || !dest) return std::unexpected("Cannot copy a null buffer");
+#endif
+    if (size == UINT64_MAX)
+    {
+        if (source_offset > source->GetLength() || dest_offset > dest->GetLength())
+            return std::unexpected("Buffer copy offset is out of bounds");
+        size = std::min(source->GetLength() - source_offset, dest->GetLength() - dest_offset);
+    }
+#ifdef RIMERA_DEBUG
+    if (source_offset > source->GetLength() || size > source->GetLength() - source_offset ||
+        dest_offset > dest->GetLength() || size > dest->GetLength() - dest_offset)
+        return std::unexpected("Buffer copy range is out of bounds");
+#endif
+    const bool transient = !m_compute_encoder;
+    if (transient) GetComputeEncoder();
+    m_compute_encoder->copyFromBuffer(static_cast<MTL::Buffer*>(source->GetNativeHandle()),
+                                      source_offset,
+                                      static_cast<MTL::Buffer*>(dest->GetNativeHandle()),
+                                      dest_offset,
+                                      size);
+    EndTransientComputeEncoder(transient);
     return {};
 }
 
@@ -425,6 +510,7 @@ RM::Result<void> RM::Command::DispatchMesh(DispatchGroup dispatch_group) const
     if (!m_render_encoder)
         return std::unexpected("BeginRenderPass is required before dispatching mesh threadgroups");
 #endif
+    if (auto result = FlushArguments(); !result) return result;
     m_render_encoder->drawMeshThreadgroups(
         MTL::Size(dispatch_group.x, dispatch_group.y, dispatch_group.z),
         MTL::Size(m_threads_per_ampl.x, m_threads_per_ampl.y, m_threads_per_ampl.z),
@@ -432,24 +518,78 @@ RM::Result<void> RM::Command::DispatchMesh(DispatchGroup dispatch_group) const
     return {};
 }
 
-void RM::Command::Dispatch(DispatchGroup dispatch_group)
+RM::Result<void> RM::Command::Dispatch(DispatchGroup dispatch_group)
 {
-    GetComputeEncoder();
-    m_compute_encoder->dispatchThreads(
+    if (auto result = FlushArguments(); !result) return result;
+    const bool transient = !m_compute_encoder;
+    if (transient) GetComputeEncoder();
+    m_compute_encoder->dispatchThreadgroups(
         MTL::Size(dispatch_group.x, dispatch_group.y, dispatch_group.z),
         MTL::Size(m_threads_per_compute.x, m_threads_per_compute.y, m_threads_per_compute.z));
-    m_compute_encoder->endEncoding();
-    m_compute_encoder = nullptr;
+    EndTransientComputeEncoder(transient);
+    return {};
 }
 
 RM::Result<void> RM::Command::BindConstantBuffer(const uint32_t slot, const Buffer* buffer) const
 {
 #ifdef RIMERA_DEBUG
-    if (!buffer || slot > 1) return std::unexpected("Invalid constant buffer binding");
+    if (!buffer || slot >= kConstantBufferSlotCount)
+        return std::unexpected("Invalid constant buffer binding");
 #endif
-    auto* args = static_cast<uint8_t*>(m_device->GetArgBuffer()->contents());
-    uint64_t address = buffer->GetGPUAddress();
-    std::memcpy(args + slot * sizeof(uint64_t), &address, sizeof(uint64_t));
+    const uint64_t address = buffer->GetGPUAddress();
+    std::memcpy(m_arguments.data() + slot * sizeof(uint64_t), &address, sizeof(uint64_t));
+    m_arguments_dirty = true;
+    return {};
+}
+
+RM::Result<void> RM::Command::BindRootConstants(const void* data,
+                                                uint32_t size,
+                                                uint32_t offset) const
+{
+#ifdef RIMERA_DEBUG
+    if (!data || !size || size % 4 || offset % 4 || offset > kRootConstantCount * 4 ||
+        size > kRootConstantCount * 4 - offset)
+        return std::unexpected("Invalid root constants binding");
+#endif
+    std::memcpy(m_arguments.data() + kConstantBufferSlotCount * sizeof(uint64_t) + offset,
+                data,
+                size);
+    m_arguments_dirty = true;
+    return {};
+}
+
+RM::Result<void> RM::Command::CreateArgumentBuffer(uint32_t size) const
+{
+    auto buffer = m_device->CreateBuffer({.size = size, .data = nullptr});
+    if (!buffer) return std::unexpected(buffer.error());
+    auto mapped = (*buffer)->Map();
+    if (!mapped)
+    {
+        m_device->DestroyBuffer(*buffer);
+        return std::unexpected(mapped.error());
+    }
+    if (m_arg_buffer) m_retired_arg_buffers.push_back(m_arg_buffer);
+    m_arg_buffer = *buffer;
+    m_arg_data = static_cast<uint8_t*>(*mapped);
+    m_arg_offset = 0;
+    m_device->GetCoreResidencySet()->AddAllocation(m_arg_buffer);
+    m_device->GetCoreResidencySet()->Commit();
+    return {};
+}
+
+RM::Result<void> RM::Command::FlushArguments() const
+{
+    if (!m_arguments_dirty) return {};
+    if (m_arg_offset + kArgumentStride > m_arg_buffer->GetLength())
+    {
+        if (auto result = CreateArgumentBuffer(m_arg_buffer->GetLength() * 2); !result)
+            return result;
+    }
+    std::memcpy(m_arg_data + m_arg_offset, m_arguments.data(), kArgumentSize);
+    m_arg_table->setAddress(m_arg_buffer->GetGPUAddress() + m_arg_offset,
+                            kIRArgumentBufferBindPoint);
+    m_arg_offset += kArgumentStride;
+    m_arguments_dirty = false;
     return {};
 }
 
@@ -460,6 +600,7 @@ void* RM::Command::GetNativeAllocator() const { return m_command_allocator.get()
 void RM::Command::GetComputeEncoder()
 {
     m_compute_encoder = m_command_buffer->computeCommandEncoder();
+    m_compute_encoder->setArgumentTable(m_arg_table.get());
 
     for (auto& barrier : m_pending_barriers)
     {
@@ -468,6 +609,13 @@ void RM::Command::GetComputeEncoder()
                                                    MTL4::VisibilityOptionDevice);
     }
     m_pending_barriers.clear();
+}
+
+void RM::Command::EndTransientComputeEncoder(bool transient)
+{
+    if (!transient) return;
+    m_compute_encoder->endEncoding();
+    m_compute_encoder = nullptr;
 }
 
 RM::Result<void> RM::CommandRing::Initialize(Device* device, QueueType type)

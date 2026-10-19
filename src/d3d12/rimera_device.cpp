@@ -307,6 +307,35 @@ void RM::Device::DestroySampler(const Sampler* sampler)
     delete sampler;
 }
 
+RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
+    const TextureCreateInfo& info,
+    HeapMemory) const
+{
+    if (auto result = Texture::ValidateCreateInfo(info); !result)
+        return std::unexpected(result.error());
+    const auto desc = D3D12::GetResourceDesc(info);
+    const auto allocation = m_device->GetResourceAllocationInfo(0, 1, &desc);
+    if (allocation.SizeInBytes == UINT64_MAX)
+        return std::unexpected("Failed to query texture allocation info");
+    return ResourceAllocationInfo{.size = allocation.SizeInBytes,
+                                  .alignment = allocation.Alignment};
+}
+
+RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
+    const BufferCreateInfo& info,
+    HeapMemory) const
+{
+    if (!info.size) return std::unexpected("Invalid buffer creation parameters");
+    auto desc = D3D12::GetResourceDesc(info);
+    if (info.flags & BufferFlags::eUnorderedAccess)
+        desc.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    const auto allocation = m_device->GetResourceAllocationInfo(0, 1, &desc);
+    if (allocation.SizeInBytes == UINT64_MAX)
+        return std::unexpected("Failed to query buffer allocation info");
+    return ResourceAllocationInfo{.size = allocation.SizeInBytes,
+                                  .alignment = allocation.Alignment};
+}
+
 RM::Result<uint32_t> RM::Device::AddDescriptor(const Buffer* buffer)
 {
     uint32_t index;
@@ -500,12 +529,11 @@ RM::Result<void> RM::Device::CreateRootSignature()
     };
     std::array root_params{
         D3D12_ROOT_PARAMETER1{
-            .ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS,
-            .Constants =
+            .ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
+            .Descriptor =
             {
                 .ShaderRegister = 0,
                 .RegisterSpace = 0,
-                .Num32BitValues = 32,
             },
             .ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL,
         },
@@ -524,6 +552,16 @@ RM::Result<void> RM::Device::CreateRootSignature()
             {
                 .ShaderRegister = 2,
                 .RegisterSpace = 0,
+            },
+            .ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL,
+        },
+        D3D12_ROOT_PARAMETER1{
+            .ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS,
+            .Constants =
+            {
+                .ShaderRegister = Command::kRootConstantSlot,
+                .RegisterSpace = 0,
+                .Num32BitValues = Command::kRootConstantCount,
             },
             .ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL,
         },

@@ -11,6 +11,10 @@ namespace RM
     class Command
     {
     public:
+        static constexpr uint32_t kConstantBufferSlotCount = 3;
+        static constexpr uint32_t kRootConstantSlot = 3;
+        static constexpr uint32_t kRootConstantCount = 32;
+
         Command(const Command&) = delete;
         Command& operator=(const Command&) = delete;
         ~Command();
@@ -20,6 +24,9 @@ namespace RM
 
         void BeginRenderPass(const RenderPassCreateInfo& info);
         void EndRenderPass();
+
+        void BeginComputePass();
+        void EndComputePass();
 
         Result<void> Draw(uint32_t vertex_count,
                           uint32_t instance_count,
@@ -32,10 +39,11 @@ namespace RM
                                  uint32_t start_instance) const;
 
         Result<void> DispatchMesh(DispatchGroup dispatch_group) const;
-        void Dispatch(DispatchGroup dispatch_group);
+        Result<void> Dispatch(DispatchGroup dispatch_group);
 
         Result<void> BindShader(const Pipeline* shader);
         Result<void> BindConstantBuffer(uint32_t slot, const Buffer* buffer) const;
+        Result<void> BindRootConstants(const void* data, uint32_t size, uint32_t offset = 0) const;
         Result<void> BindIndexBuffer(const Buffer* buffer, Format format);
 
         void Barrier(const BarrierGroup& group);
@@ -51,6 +59,11 @@ namespace RM
         void SetPrimitiveTopology(PrimitiveTopology topology);
 
         Result<void> CopyTexture(const Texture* source, const Texture* dest);
+        Result<void> CopyBuffer(const Buffer* source,
+                                const Buffer* dest,
+                                uint64_t source_offset = 0,
+                                uint64_t dest_offset = 0,
+                                uint64_t size = UINT64_MAX);
         Result<void> Blit(const Texture* source,
                           const Texture* dest,
                           const BlitRegion& region = {});
@@ -92,6 +105,22 @@ namespace RM
         MTL4::ComputeCommandEncoder* m_compute_encoder = nullptr;
 
         void GetComputeEncoder();
+        void EndTransientComputeEncoder(bool transient);
+        [[nodiscard]] Result<void> CreateArgumentBuffer(uint32_t size) const;
+        [[nodiscard]] Result<void> FlushArguments() const;
+
+        static constexpr uint32_t kArgumentSize =
+            sizeof(uint64_t) * kConstantBufferSlotCount + sizeof(uint32_t) * kRootConstantCount;
+        static constexpr uint32_t kArgumentStride = 256;
+        static constexpr uint32_t kInitialArgumentBufferSize = kArgumentStride * 1024;
+
+        NS::SharedPtr<MTL4::ArgumentTable> m_arg_table;
+        mutable std::array<uint8_t, kArgumentSize> m_arguments{};
+        mutable bool m_arguments_dirty = true;
+        mutable Buffer* m_arg_buffer = nullptr;
+        mutable uint8_t* m_arg_data = nullptr;
+        mutable uint32_t m_arg_offset = 0;
+        mutable std::vector<Buffer*> m_retired_arg_buffers;
 
         DispatchGroup m_threads_per_mesh{};
         DispatchGroup m_threads_per_ampl{};
@@ -108,6 +137,7 @@ namespace RM
 
 #elifdef RIMERA_WINDOWS
         Pipeline* m_blit_shader = nullptr;
+        bool m_in_compute_pass = false;
         ComPtr<ID3D12GraphicsCommandList10> m_command_buffer;
         ComPtr<ID3D12CommandAllocator> m_command_allocator;
 #endif

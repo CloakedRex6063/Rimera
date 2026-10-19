@@ -4,6 +4,7 @@
 namespace RM
 {
     class Device;
+    class Heap;
 
     class Buffer
     {
@@ -18,12 +19,22 @@ namespace RM
         [[nodiscard]] uint32_t GetResourceIndex() const { return m_resource_index; }
         [[nodiscard]] uint64_t GetGPUAddress() const;
         [[nodiscard]] uint32_t GetLength() const { return m_length; }
+        [[nodiscard]] Heap* GetHeap() const noexcept { return m_heap; }
+        [[nodiscard]] uint64_t GetHeapOffset() const noexcept { return m_heap_offset; }
 
     private:
         Buffer() = default;
         [[nodiscard]] Result<void> Initialize(Device* device, const BufferCreateInfo& info);
+        [[nodiscard]] Result<void> Initialize(Device* device,
+                                              Heap* heap,
+                                              uint64_t offset,
+                                              const BufferCreateInfo& info);
         friend class Device;
+        friend class Heap;
         Device* m_device = nullptr;
+        Heap* m_heap = nullptr;
+        uint64_t m_heap_offset = 0;
+        bool m_heap_allocated = false;
         uint32_t m_resource_index = UINT32_MAX;
         uint32_t m_length = 0;
         EnumFlags<BufferFlags> m_flags;

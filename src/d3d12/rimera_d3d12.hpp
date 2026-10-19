@@ -9,6 +9,8 @@ namespace RM::D3D12
 
     D3D12_COMMAND_LIST_TYPE GetQueueType(QueueType type);
     D3D12_RESOURCE_DESC GetResourceDesc(const BufferCreateInfo& info);
+    D3D12_RESOURCE_DESC GetResourceDesc(const TextureCreateInfo& info);
+    D3D12_HEAP_TYPE GetHeapType(HeapMemory memory);
     DXGI_FORMAT GetFormat(const Format& format);
     Format GetFormat(const DXGI_FORMAT& format);
     D3D12_BARRIER_ACCESS GetBarrierAccess(BarrierAccess access);

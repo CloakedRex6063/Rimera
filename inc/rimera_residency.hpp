@@ -5,6 +5,7 @@ namespace RM
 {
     class Buffer;
     class Texture;
+    class Heap;
     class Device;
 
     class ResidencySet
@@ -18,6 +19,8 @@ namespace RM
         void RemoveAllocation(const Texture* resource);
         void AddAllocation(Buffer* resource);
         void RemoveAllocation(const Buffer* resource);
+        void AddAllocation(Heap* heap);
+        void RemoveAllocation(const Heap* heap);
 
         void RemoveAllAllocations();
         void Commit() const;
@@ -30,8 +33,8 @@ namespace RM
     private:
         ResidencySet() = default;
 #ifdef RIMERA_MAC
-        void AddAllocation(const MTL::Resource* resource) const;
-        void RemoveAllocation(const MTL::Resource* resource) const;
+        void AddAllocation(const MTL::Allocation* allocation) const;
+        void RemoveAllocation(const MTL::Allocation* allocation) const;
         NS::SharedPtr<MTL::ResidencySet> m_residency_set;
 #elifdef RIMERA_WINDOWS
         std::vector<ID3D12Pageable*> m_resources;

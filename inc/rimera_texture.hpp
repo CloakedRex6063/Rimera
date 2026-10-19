@@ -4,6 +4,7 @@
 namespace RM
 {
     class Device;
+    class Heap;
 
     class Texture
     {
@@ -19,6 +20,8 @@ namespace RM
         [[nodiscard]] uint32_t GetArrayLayers() const noexcept { return m_layer_count; }
         [[nodiscard]] uint32_t GetBaseMip() const noexcept { return m_base_mip; }
         [[nodiscard]] uint32_t GetBaseLayer() const noexcept { return m_base_layer; }
+        [[nodiscard]] Heap* GetHeap() const noexcept { return m_heap; }
+        [[nodiscard]] uint64_t GetHeapOffset() const noexcept { return m_heap_offset; }
         [[nodiscard]] uint32_t GetResourceIndex() const noexcept
         {
             if (m_view_type) return GetResourceIndex(*m_view_type);
@@ -45,8 +48,13 @@ namespace RM
     private:
         Texture() = default;
         [[nodiscard]] Result<void> ValidateView(const TextureViewCreateInfo& info) const;
+        [[nodiscard]] static Result<void> ValidateCreateInfo(const TextureCreateInfo& info);
         [[nodiscard]] Result<void> Initialize(Device* device, const TextureCreateInfo& info);
         [[nodiscard]] Result<void> Initialize(Device* device, const TextureViewCreateInfo& info);
+        [[nodiscard]] Result<void> Initialize(Device* device,
+                                              Heap* heap,
+                                              uint64_t offset,
+                                              const TextureCreateInfo& info);
 
         std::optional<TextureViewType> m_view_type;
         Format m_format;
@@ -57,7 +65,11 @@ namespace RM
         uint32_t m_layer_count = 1;
 
         friend class Device;
+        friend class Heap;
         Device* m_device = nullptr;
+        Heap* m_heap = nullptr;
+        uint64_t m_heap_offset = 0;
+        bool m_heap_allocated = false;
 #ifdef RIMERA_MAC
         [[nodiscard]] Result<void> Initialize(Device* device, MTL::Texture* texture);
         NS::SharedPtr<MTL::Texture> m_texture;

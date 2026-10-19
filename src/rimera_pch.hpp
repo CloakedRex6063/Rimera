@@ -23,6 +23,7 @@ using namespace Microsoft::WRL;
 #endif
 
 #include "memory"
+#include "cstring"
 #include "array"
 #include "string_view"
 #include "string"
