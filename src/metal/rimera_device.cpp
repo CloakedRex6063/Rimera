@@ -34,23 +34,28 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     if (!graphics_queue_result) return std::unexpected(graphics_queue_result.error());
     m_graphics_queue = std::move(*graphics_queue_result);
 
+    auto frame_fence_result = CreateFence();
+    if (!frame_fence_result) return std::unexpected(frame_fence_result.error());
+    m_frame_fence = *frame_fence_result;
+
     if (auto result = CreateRootSignature(); !result) return std::unexpected(result.error());
 
     m_core_residency_set->Commit();
     m_core_residency_set->RequestResidency();
 
-    auto blit_bgra8_result = Helpers::CreateBlitShader(this, Format::BGRA8_UNorm_sRGB);
+    auto blit_bgra8_result = Helpers::CreateBlitShader(this, Format::BGRA8_UNorm);
     if (!blit_bgra8_result) return std::unexpected(blit_bgra8_result.error());
-    m_blit_pipelines[Format::BGRA8_UNorm_sRGB] = std::move(*blit_bgra8_result);
-    auto blit_hdr_result = Helpers::CreateBlitShader(this, Format::BGRA10_XR_sRGB);
+    m_blit_pipelines[Format::BGRA8_UNorm] = std::move(*blit_bgra8_result);
+    auto blit_hdr_result = Helpers::CreateBlitShader(this, Format::BGRA10_XR);
     if (!blit_hdr_result) return std::unexpected(blit_hdr_result.error());
-    m_blit_pipelines[Format::BGRA10_XR_sRGB] = std::move(*blit_hdr_result);
+    m_blit_pipelines[Format::BGRA10_XR] = std::move(*blit_hdr_result);
     return {};
 }
 
 RM::Device::~Device()
 {
     if (m_graphics_queue) static_cast<void>(m_graphics_queue->WaitIdle());
+    if (m_frame_fence) DestroyFence(m_frame_fence);
     if (m_upload_command) DestroyCommand(m_upload_command);
     if (m_upload_fence) DestroyFence(m_upload_fence);
     for (auto [id, texture] : m_swapchain_textures) delete texture;
@@ -84,6 +89,12 @@ RM::Texture* RM::Device::GetCurrentBackBuffer()
 
 RM::Result<void> RM::Device::NewFrame(Queue* queue)
 {
+    if (auto result = queue->Signal(m_frame_fence, ++m_frame_value); !result) return result;
+    m_frame_values[m_current_frame] = m_frame_value;
+    m_current_frame = (m_current_frame + 1) % m_frame_values.size();
+    if (auto result = m_frame_fence->Wait(m_frame_values[m_current_frame]); !result)
+        return result;
+
     m_frame_pool.reset();
     m_frame_pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
 
@@ -125,20 +136,13 @@ void* RM::Device::GetNativeHandle() const { return m_device.get(); }
 RM::Result<void> RM::Device::CreateRootSignature()
 {
     IRRootParameter1 params[Command::kConstantBufferSlotCount + 1]{};
-    for (uint32_t slot = 0; slot < Command::kConstantBufferSlotCount; ++slot)
+    for (uint32_t slot = 0; slot <= Command::kRootConstantSlot; ++slot)
     {
         params[slot].ParameterType = IRRootParameterTypeCBV;
         params[slot].ShaderVisibility = IRShaderVisibilityAll;
         params[slot].Descriptor.ShaderRegister = slot;
         params[slot].Descriptor.RegisterSpace = 0;
     }
-
-    auto& constants = params[Command::kRootConstantSlot];
-    constants.ParameterType = IRRootParameterType32BitConstants;
-    constants.ShaderVisibility = IRShaderVisibilityAll;
-    constants.Constants.ShaderRegister = Command::kRootConstantSlot;
-    constants.Constants.RegisterSpace = 0;
-    constants.Constants.Num32BitValues = Command::kRootConstantCount;
 
     IRVersionedRootSignatureDescriptor desc{};
     desc.version = IRRootSignatureVersion_1_1;

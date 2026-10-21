@@ -2,6 +2,7 @@
 #include "rimera_result.hpp"
 #include "glm/glm.hpp"
 #include "array"
+#include "string"
 
 enum class Key : uint8_t
 {
@@ -52,6 +53,12 @@ enum class Key : uint8_t
     Right,
     Up,
     Down,
+    Backspace,
+    Delete,
+    Home,
+    End,
+    PageUp,
+    PageDown,
     Count
 };
 
@@ -105,6 +112,7 @@ public:
     [[nodiscard]] glm::vec2 GetMousePosition() const { return m_mouse_position; }
     [[nodiscard]] glm::vec2 GetMouseDelta() const { return m_mouse_delta; }
     [[nodiscard]] float GetScrollDelta() const { return m_scroll_delta; }
+    [[nodiscard]] const std::u32string& GetTextInput() const { return m_text_input; }
 
 private:
     Window() = default;
@@ -116,6 +124,7 @@ private:
     {
         m_mouse_buttons[static_cast<size_t>(button)] = down;
     }
+    void AddTextInput(char32_t character);
     bool m_running = false;
     bool m_resized = false;
     glm::uvec2 m_size{1280, 720};
@@ -127,4 +136,5 @@ private:
     glm::vec2 m_mouse_position{};
     glm::vec2 m_mouse_delta{};
     float m_scroll_delta = 0.f;
+    std::u32string m_text_input;
 };

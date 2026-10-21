@@ -68,6 +68,18 @@ namespace
                 return Key::Up;
             case VK_DOWN:
                 return Key::Down;
+            case VK_BACK:
+                return Key::Backspace;
+            case VK_DELETE:
+                return Key::Delete;
+            case VK_HOME:
+                return Key::Home;
+            case VK_END:
+                return Key::End;
+            case VK_PRIOR:
+                return Key::PageUp;
+            case VK_NEXT:
+                return Key::PageDown;
             default:
                 return std::nullopt;
         }
@@ -199,6 +211,7 @@ void Window::Tick()
     if (hwnd != nullptr && IsWindow(hwnd))
     {
         MSG msg{};
+        char16_t high_surrogate = 0;
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             switch (msg.message)
@@ -206,6 +219,26 @@ void Window::Tick()
                 case WM_QUIT:
                     m_running = false;
                     break;
+                case WM_CHAR:
+                {
+                    const auto unit = static_cast<char16_t>(msg.wParam);
+                    if (unit >= 0xD800 && unit <= 0xDBFF)
+                    {
+                        high_surrogate = unit;
+                        break;
+                    }
+                    if (unit >= 0xDC00 && unit <= 0xDFFF)
+                    {
+                        if (high_surrogate)
+                            AddTextInput(0x10000 + ((char32_t{high_surrogate} - 0xD800) << 10) +
+                                         (unit - 0xDC00));
+                        high_surrogate = 0;
+                        break;
+                    }
+                    high_surrogate = 0;
+                    AddTextInput(unit);
+                    break;
+                }
                 case WM_KEYDOWN:
                 case WM_SYSKEYDOWN:
                 case WM_KEYUP:

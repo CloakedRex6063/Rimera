@@ -90,7 +90,10 @@ void RM::Command::Begin()
     if (!m_retired_arg_buffers.empty()) m_device->GetCoreResidencySet()->Commit();
     m_retired_arg_buffers.clear();
     m_arguments.fill(0);
+    m_root_constants.fill(0);
+    m_root_constants_size = 0;
     m_arguments_dirty = true;
+    m_root_constants_dirty = true;
     m_arg_offset = 0;
     m_command_allocator->reset();
     m_command_buffer->beginCommandBuffer(m_command_allocator.get());
@@ -565,8 +568,7 @@ RM::Result<void> RM::Command::BindConstantBuffer(const uint32_t slot, const Buff
     if (!buffer || slot >= kConstantBufferSlotCount)
         return std::unexpected("Invalid constant buffer binding");
 #endif
-    const uint64_t address = buffer->GetGPUAddress();
-    std::memcpy(m_arguments.data() + slot * sizeof(uint64_t), &address, sizeof(uint64_t));
+    m_arguments[slot] = buffer->GetGPUAddress();
     m_arguments_dirty = true;
     return {};
 }
@@ -580,10 +582,9 @@ RM::Result<void> RM::Command::BindRootConstants(const void* data,
         size > kRootConstantCount * 4 - offset)
         return std::unexpected("Invalid root constants binding");
 #endif
-    std::memcpy(m_arguments.data() + kConstantBufferSlotCount * sizeof(uint64_t) + offset,
-                data,
-                size);
-    m_arguments_dirty = true;
+    std::memcpy(m_root_constants.data() + offset, data, size);
+    m_root_constants_size = std::max(m_root_constants_size, offset + size);
+    m_root_constants_dirty = true;
     return {};
 }
 
@@ -606,18 +607,36 @@ RM::Result<void> RM::Command::CreateArgumentBuffer(uint32_t size) const
     return {};
 }
 
+RM::Result<uint32_t> RM::Command::AllocateArguments(uint32_t size) const
+{
+    uint32_t offset = (m_arg_offset + kArgumentAlignment - 1) & ~(kArgumentAlignment - 1);
+    if (offset + size > m_arg_buffer->GetLength())
+    {
+        if (auto result = CreateArgumentBuffer(std::max(m_arg_buffer->GetLength() * 2, size));
+            !result)
+            return std::unexpected(result.error());
+        offset = 0;
+    }
+    m_arg_offset = offset + size;
+    return offset;
+}
+
 RM::Result<void> RM::Command::FlushArguments() const
 {
-    if (!m_arguments_dirty) return {};
-    if (m_arg_offset + kArgumentStride > m_arg_buffer->GetLength())
+    if (m_root_constants_dirty && m_root_constants_size)
     {
-        if (auto result = CreateArgumentBuffer(m_arg_buffer->GetLength() * 2); !result)
-            return result;
+        auto offset = AllocateArguments(m_root_constants_size);
+        if (!offset) return std::unexpected(offset.error());
+        std::memcpy(m_arg_data + *offset, m_root_constants.data(), m_root_constants_size);
+        m_arguments[kRootConstantSlot] = m_arg_buffer->GetGPUAddress() + *offset;
+        m_arguments_dirty = true;
     }
-    std::memcpy(m_arg_data + m_arg_offset, m_arguments.data(), kArgumentSize);
-    m_arg_table->setAddress(m_arg_buffer->GetGPUAddress() + m_arg_offset,
-                            kIRArgumentBufferBindPoint);
-    m_arg_offset += kArgumentStride;
+    m_root_constants_dirty = false;
+    if (!m_arguments_dirty) return {};
+    auto offset = AllocateArguments(sizeof(m_arguments));
+    if (!offset) return std::unexpected(offset.error());
+    std::memcpy(m_arg_data + *offset, m_arguments.data(), sizeof(m_arguments));
+    m_arg_table->setAddress(m_arg_buffer->GetGPUAddress() + *offset, kIRArgumentBufferBindPoint);
     m_arguments_dirty = false;
     return {};
 }

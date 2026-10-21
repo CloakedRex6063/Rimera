@@ -7,6 +7,10 @@ namespace RM::D3D12
                                                          ShaderType type);
     [[nodiscard]] D3D12_SHADER_BYTECODE GetShaderBytecode(const ComPtr<IDxcBlob>& blob);
 
+#ifdef RIMERA_DEBUG
+    void EnableDebugLayer();
+#endif
+
     D3D12_COMMAND_LIST_TYPE GetQueueType(QueueType type);
     D3D12_RESOURCE_DESC GetResourceDesc(const BufferCreateInfo& info);
     D3D12_RESOURCE_DESC GetResourceDesc(const TextureCreateInfo& info);

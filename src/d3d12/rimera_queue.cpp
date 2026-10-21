@@ -72,12 +72,8 @@ void RM::Queue::Submit(const Command* command) const
 
 RM::Result<void> RM::Queue::Present() const
 {
-    auto& frame_data = m_device->m_frame_datas[m_device->m_current_frame];
-    if (auto result = Signal(frame_data.swapchain_fence, ++frame_data.fence_value); !result)
-        return std::unexpected(result.error());
     if (FAILED(m_device->m_swapchain->Present(0, 0)))
         return std::unexpected("Failed to present swapchain");
-    m_device->m_current_frame = (m_device->m_current_frame + 1) % 3;
     return {};
 }
 

@@ -148,6 +148,18 @@ namespace
                 return Key::Up;
             case 0x7D:
                 return Key::Down;
+            case 0x33:
+                return Key::Backspace;
+            case 0x75:
+                return Key::Delete;
+            case 0x73:
+                return Key::Home;
+            case 0x77:
+                return Key::End;
+            case 0x74:
+                return Key::PageUp;
+            case 0x79:
+                return Key::PageDown;
             default:
                 return std::nullopt;
         }
@@ -251,6 +263,14 @@ void Window::Tick()
                     if ([event modifierFlags] & NSEventModifierFlagCommand) break;
                     if (auto key = ToKey([event keyCode]))
                         SetKey(*key, [event type] == NSEventTypeKeyDown);
+                    if ([event type] == NSEventTypeKeyDown)
+                    {
+                        NSData* text = [[event characters]
+                            dataUsingEncoding:NSUTF32LittleEndianStringEncoding];
+                        const auto* characters = static_cast<const char32_t*>([text bytes]);
+                        for (NSUInteger i = 0; i < [text length] / sizeof(char32_t); ++i)
+                            AddTextInput(characters[i]);
+                    }
                     handled = true;
                     break;
                 case NSEventTypeFlagsChanged:

@@ -146,6 +146,10 @@ namespace RM
         CA::MetalDrawable* m_drawable = nullptr;
         IRRootSignature* m_root_sig = nullptr;
         std::unordered_map<uint64_t, Texture*> m_swapchain_textures{};
+        Fence* m_frame_fence = nullptr;
+        std::array<uint64_t, 3> m_frame_values{};
+        uint64_t m_frame_value = 0;
+        uint32_t m_current_frame = 0;
         uint32_t m_current_resource = 0;
         std::vector<uint32_t> m_free_resources;
 

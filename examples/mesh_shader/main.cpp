@@ -6,6 +6,7 @@
 #include "rimera_builders.hpp"
 #include "rimera_render_graph.hpp"
 #include "chrono"
+#include "imgui_layer.hpp"
 
 struct MeshShaderScene
 {
@@ -272,20 +273,34 @@ int main()
     camera.LookAt({0.f, 0.f, 5.f}, {0.f, 0.f, 0.f});
     auto previous_time = std::chrono::steady_clock::now();
 
+    ImGuiLayer* imgui;
+    auto result_imgui = ImGuiLayer::Create(device, window, MeshShaderScene::kColorFormat);
+    if (!result_imgui)
+    {
+        std::cerr << result_imgui.error() << '\n';
+        exit_code = 1;
+        return exit_code;
+    }
+    imgui = result_imgui.value();
+    
     while (window->IsRunning())
     {
         window->Tick();
         if (!window->IsRunning()) break;
-
+        
         const auto time = std::chrono::steady_clock::now();
         const float delta_time = std::chrono::duration<float>(time - previous_time).count();
         previous_time = time;
+        
+        imgui->NewFrame(delta_time);
+        imgui->ShowStatistics(*graph);
+        if (!imgui->WantsMouse()) camera.Update(*window, delta_time);
 
         if (window->IsKeyPressed(Key::Tab))
             camera.SetMode(camera.GetMode() == CameraMode::Orbit
                                ? CameraMode::Fly
                                : CameraMode::Orbit);
-        camera.Update(*window, delta_time);
+        
         const glm::mat4 view_projection = camera.GetViewProjection();
 
         auto* queue = device->GetGraphicsQueue();
@@ -330,6 +345,8 @@ int main()
              .ResourceIndex(4, color)
              .RootConstants(size, 8)
              .Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
+        
+        imgui->AddPass(graph, color);
 
         graph->AddCopyPass("Backbuffer Blit").Blit(color, output);
 
@@ -360,6 +377,7 @@ int main()
         exit_code = 1;
     }
     device->DestroyRenderGraph(graph);
+    ImGuiLayer::Destroy(imgui);
     scene.Cleanup();
     device->DestroyCommandRing(command_ring);
     RM::DestroyDevice(device);

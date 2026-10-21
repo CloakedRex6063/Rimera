@@ -49,7 +49,7 @@ namespace RM
             requires(!std::is_pointer_v<T> && std::is_trivially_copyable_v<T>)
         Result<void> RootConstants(const T& value, uint32_t offset = 0)
         {
-            return RootConstants(&value, sizeof(T), offset);
+            return BindRootConstants(&value, sizeof(T), offset);
         }
 
         Result<void> BindIndexBuffer(const Buffer* buffer, Format format);
@@ -118,16 +118,18 @@ namespace RM
         void GetComputeEncoder();
         void EndTransientComputeEncoder(bool transient);
         [[nodiscard]] Result<void> CreateArgumentBuffer(uint32_t size) const;
+        [[nodiscard]] Result<uint32_t> AllocateArguments(uint32_t size) const;
         [[nodiscard]] Result<void> FlushArguments() const;
 
-        static constexpr uint32_t kArgumentSize =
-            sizeof(uint64_t) * kConstantBufferSlotCount + sizeof(uint32_t) * kRootConstantCount;
-        static constexpr uint32_t kArgumentStride = 256;
-        static constexpr uint32_t kInitialArgumentBufferSize = kArgumentStride * 1024;
+        static constexpr uint32_t kArgumentAlignment = 16;
+        static constexpr uint32_t kInitialArgumentBufferSize = 256 * 1024;
 
         NS::SharedPtr<MTL4::ArgumentTable> m_arg_table;
-        mutable std::array<uint8_t, kArgumentSize> m_arguments{};
+        mutable std::array<uint64_t, kConstantBufferSlotCount + 1> m_arguments{};
+        mutable std::array<uint8_t, kRootConstantCount * sizeof(uint32_t)> m_root_constants{};
+        mutable uint32_t m_root_constants_size = 0;
         mutable bool m_arguments_dirty = true;
+        mutable bool m_root_constants_dirty = true;
         mutable Buffer* m_arg_buffer = nullptr;
         mutable uint8_t* m_arg_data = nullptr;
         mutable uint32_t m_arg_offset = 0;

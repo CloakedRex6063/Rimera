@@ -888,7 +888,8 @@ NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Devi
     [ns_view setLayer:(__bridge CAMetalLayer*)swap_layer.get()];
     bool supports_hdr = SupportsHDR(info.window);
     swap_layer->setDevice(device.get());
-    swap_layer->setPixelFormat(supports_hdr ? MTL::PixelFormat::PixelFormatBGRA10_XR_sRGB : MTL::PixelFormat::PixelFormatBGRA8Unorm_sRGB);
+    swap_layer->setPixelFormat(supports_hdr ? MTL::PixelFormat::PixelFormatBGRA10_XR
+                                            : MTL::PixelFormat::PixelFormatBGRA8Unorm);
     CGColorSpaceRef color_space = CGColorSpaceCreateWithName(
         supports_hdr ? kCGColorSpaceExtendedSRGB : kCGColorSpaceSRGB);
     [(__bridge CAMetalLayer*)swap_layer.get() setColorspace:color_space];

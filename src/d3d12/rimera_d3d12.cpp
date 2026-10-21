@@ -22,6 +22,16 @@ D3D12_SHADER_BYTECODE RM::D3D12::GetShaderBytecode(const ComPtr<IDxcBlob>& blob)
                 : D3D12_SHADER_BYTECODE{};
 }
 
+#ifdef RIMERA_DEBUG
+void RM::D3D12::EnableDebugLayer()
+{
+    ComPtr<ID3D12Debug1> debug;
+    if (FAILED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug)))) return;
+    debug->EnableDebugLayer();
+    debug->SetEnableGPUBasedValidation(TRUE);
+}
+#endif
+
 D3D12_COMMAND_LIST_TYPE RM::D3D12::GetQueueType(QueueType type)
 {
     switch (type)

@@ -55,12 +55,8 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     if (!info.window || !info.width || !info.height || !info.resource_descriptor_count ||
         !info.sampler_descriptor_count)
         return std::unexpected("Invalid device creation parameters");
-#ifdef _DEBUG
-    ComPtr<ID3D12Debug> debug;
-    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
-    {
-        debug->EnableDebugLayer();
-    }
+#ifdef RIMERA_DEBUG
+    D3D12::EnableDebugLayer();
 #endif
     if (FAILED(CreateDXGIFactory(IID_PPV_ARGS(&m_factory))))
         return std::unexpected("Failed to create DXGI factory");
@@ -384,10 +380,14 @@ RM::Texture* RM::Device::GetCurrentBackBuffer()
     return m_frame_datas[m_swapchain->GetCurrentBackBufferIndex()].swapchain_texture;
 }
 
-RM::Result<void> RM::Device::NewFrame(Queue*)
+RM::Result<void> RM::Device::NewFrame(Queue* queue)
 {
-    return m_frame_datas[m_current_frame].swapchain_fence->Wait(
-        m_frame_datas[m_current_frame].fence_value);
+    auto& previous = m_frame_datas[m_current_frame];
+    if (auto result = queue->Signal(previous.swapchain_fence, ++previous.fence_value); !result)
+        return result;
+    m_current_frame = (m_current_frame + 1) % m_frame_datas.size();
+    const auto& frame = m_frame_datas[m_current_frame];
+    return frame.swapchain_fence->Wait(frame.fence_value);
 }
 
 RM::Result<void> RM::Device::Resize(uint32_t width, uint32_t height)

@@ -39,3 +39,18 @@ FetchContent_MakeAvailable(mikktspace)
 add_library(mikktspace STATIC ${mikktspace_SOURCE_DIR}/mikktspace.c)
 target_include_directories(mikktspace PUBLIC ${mikktspace_SOURCE_DIR})
 target_link_libraries(Utility PUBLIC mikktspace)
+
+FetchContent_Declare(
+        ImGui
+        GIT_REPOSITORY https://github.com/ocornut/imgui
+        GIT_TAG v1.91.9b
+)
+FetchContent_MakeAvailable(ImGui)
+add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+target_link_libraries(Utility PUBLIC imgui)
