@@ -50,16 +50,6 @@ static std::string HResultMessage(const HRESULT hr)
     return message;
 }
 
-RM::Result<RM::Device*> RM::CreateDevice(const DeviceCreateInfo& info)
-{
-    return Device::CreateObject<Device>(info);
-}
-
-void RM::DestroyDevice(const Device* device)
-{
-    delete device;
-}
-
 RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 {
     if (!info.window || !info.width || !info.height || !info.resource_descriptor_count ||
@@ -190,6 +180,8 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 RM::Device::~Device()
 {
     if (m_graphics_queue) static_cast<void>(m_graphics_queue->WaitIdle());
+    if (m_upload_command) DestroyCommand(m_upload_command);
+    if (m_upload_fence) DestroyFence(m_upload_fence);
     if (m_core_residency_set) m_core_residency_set->RemoveAllAllocations();
     for (int i = 0; i < 3; i++)
     {
@@ -205,106 +197,9 @@ RM::Device::~Device()
     }
 }
 
-RM::Result<RM::Fence*> RM::Device::CreateFence() { return CreateObject<Fence>(this); }
-
-void RM::Device::DestroyFence(const Fence* fence)
-{
-    delete fence;
-}
-
 RM::Result<RM::Queue*> RM::Device::CreateQueue(QueueType type)
 {
     return CreateObject<Queue>(this, type);
-}
-
-void RM::Device::DestroyQueue(const Queue* queue)
-{
-    delete queue;
-}
-
-RM::Result<RM::Command*> RM::Device::CreateCommand(CommandType type)
-{
-    return CreateObject<Command>(this, type);
-}
-
-void RM::Device::DestroyCommand(const Command* command) const
-{
-    delete command;
-}
-
-RM::Result<RM::CommandRing*> RM::Device::CreateCommandRing(QueueType type)
-{
-    return CreateObject<CommandRing>(this, type);
-}
-
-void RM::Device::DestroyCommandRing(const CommandRing* command_ring) const
-{
-    delete command_ring;
-}
-
-RM::Result<RM::ResidencySet*> RM::Device::CreateResidencySet()
-{
-    return CreateObject<ResidencySet>(this);
-}
-
-void RM::Device::DestroyResidencySet(const ResidencySet* residency_set) const
-{
-    delete residency_set;
-}
-
-RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const ComputePipelineCreateInfo& info)
-{
-    return CreateObject<Pipeline>(this, info);
-}
-
-RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const GraphicsPipelineCreateInfo& info)
-{
-    return CreateObject<Pipeline>(this, info);
-}
-
-RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const MeshGraphicsPipelineCreateInfo& info)
-{
-    return CreateObject<Pipeline>(this, info);
-}
-
-void RM::Device::DestroyPipeline(const Pipeline* pipeline)
-{
-    delete pipeline;
-}
-
-RM::Result<RM::Texture*> RM::Device::CreateTexture(const TextureCreateInfo& info)
-{
-    return CreateObject<Texture>(this, info);
-}
-
-void RM::Device::DestroyTexture(const Texture* texture) const
-{
-    delete texture;
-}
-
-RM::Result<RM::Texture*> RM::Device::CreateTextureView(const TextureViewCreateInfo& info)
-{
-    return CreateObject<Texture>(this, info);
-}
-
-RM::Result<RM::Buffer*> RM::Device::CreateBuffer(const BufferCreateInfo& info)
-{
-    return CreateObject<Buffer>(this, info);
-}
-
-void RM::Device::DestroyBuffer(const Buffer* buffer)
-{
-    delete buffer;
-}
-
-RM::Result<RM::Sampler*> RM::Device::CreateSampler(const SamplerCreateInfo& info)
-{
-    return CreateObject<Sampler>(this, info);
-}
-
-void RM::Device::DestroySampler(const Sampler* sampler)
-{
-    delete sampler;
 }
 
 RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
@@ -334,6 +229,31 @@ RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
         return std::unexpected("Failed to query buffer allocation info");
     return ResourceAllocationInfo{.size = allocation.SizeInBytes,
                                   .alignment = allocation.Alignment};
+}
+
+RM::TextureCopyFootprint RM::Device::GetCopyFootprint(const Texture* texture,
+                                                      uint32_t mip_level) const
+{
+    const auto desc = static_cast<ID3D12Resource*>(texture->GetNativeHandle())->GetDesc();
+    const uint32_t subresource =
+        texture->GetBaseMip() + mip_level + texture->GetBaseLayer() * desc.MipLevels;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT row_count = 0;
+    UINT64 row_size = 0;
+    UINT64 total_size = 0;
+    m_device->GetCopyableFootprints(&desc,
+                                    subresource,
+                                    1,
+                                    0,
+                                    &footprint,
+                                    &row_count,
+                                    &row_size,
+                                    &total_size);
+    if (total_size == UINT64_MAX) return {};
+    return {.bytes_per_row = footprint.Footprint.RowPitch,
+            .row_size = static_cast<uint32_t>(row_size),
+            .row_count = row_count,
+            .size = total_size};
 }
 
 RM::Result<uint32_t> RM::Device::AddDescriptor(const Buffer* buffer)

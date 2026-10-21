@@ -167,10 +167,9 @@ namespace RM
             return *this;
         }
 
-        TextureBuilder& InitialData(const void* data, uint32_t bytes_per_row)
+        TextureBuilder& InitialData(const void* data)
         {
             m_value.initial_data = data;
-            m_value.bytes_per_row = bytes_per_row;
             return *this;
         }
 

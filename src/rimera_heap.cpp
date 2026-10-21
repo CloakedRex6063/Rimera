@@ -11,16 +11,6 @@ namespace
     }
 }
 
-RM::Result<RM::Heap*> RM::Device::CreateHeap(const HeapCreateInfo& info)
-{
-    return CreateObject<Heap>(this, info);
-}
-
-void RM::Device::DestroyHeap(const Heap* heap) const
-{
-    delete heap;
-}
-
 RM::Result<RM::Texture*> RM::Heap::CreateTexture(const TextureCreateInfo& info)
 {
     auto allocation = GetAllocationInfo(info);

@@ -44,6 +44,14 @@ namespace RM
         Result<void> BindShader(const Pipeline* shader);
         Result<void> BindConstantBuffer(uint32_t slot, const Buffer* buffer) const;
         Result<void> BindRootConstants(const void* data, uint32_t size, uint32_t offset = 0) const;
+
+        template <class T>
+            requires(!std::is_pointer_v<T> && std::is_trivially_copyable_v<T>)
+        Result<void> RootConstants(const T& value, uint32_t offset = 0)
+        {
+            return RootConstants(&value, sizeof(T), offset);
+        }
+
         Result<void> BindIndexBuffer(const Buffer* buffer, Format format);
 
         void Barrier(const BarrierGroup& group);
@@ -59,6 +67,9 @@ namespace RM
         void SetPrimitiveTopology(PrimitiveTopology topology);
 
         Result<void> CopyTexture(const Texture* source, const Texture* dest);
+        Result<void> CopyBufferToTexture(const Buffer* source,
+                                         const Texture* dest,
+                                         const BufferTextureCopy& region);
         Result<void> CopyBuffer(const Buffer* source,
                                 const Buffer* dest,
                                 uint64_t source_offset = 0,

@@ -37,6 +37,7 @@ add_library(Rimera STATIC
         inc/rimera_render_graph.hpp
         src/rimera_heap.cpp
         src/rimera_render_graph.cpp
+        src/rimera_device_common.cpp
 )
 rimera_disable_exceptions(Rimera)
 target_compile_definitions(Rimera PUBLIC

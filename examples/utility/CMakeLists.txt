@@ -4,15 +4,18 @@ target_include_directories(Utility PUBLIC inc)
 target_link_libraries(Utility PUBLIC Rimera)
 
 target_sources(Utility PRIVATE
+        inc/camera.hpp
         inc/fileio.hpp
         inc/mesh.hpp
         inc/model.hpp
         inc/texture.hpp
         inc/window.hpp
+        src/camera.cpp
         src/fileio.cpp
         src/mesh.cpp
         src/model.cpp
-        src/texture.cpp)
+        src/texture.cpp
+        src/window.cpp)
 
 add_subdirectory(external)
 

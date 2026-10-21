@@ -1,7 +1,9 @@
 #pragma once
+#include "concepts"
 #include "functional"
 #include "string"
 #include "unordered_map"
+#include "variant"
 #include "rimera_structs.hpp"
 
 namespace RM
@@ -10,6 +12,7 @@ namespace RM
     class Command;
     class Device;
     class Heap;
+    class Pipeline;
     class Texture;
     class RenderGraph;
 
@@ -66,6 +69,7 @@ namespace RM
 
     private:
         friend class RenderGraph;
+
         RenderGraphContext(const RenderGraph* graph,
                            Command* command,
                            uint32_t pass,
@@ -175,6 +179,97 @@ namespace RM
             float clear_stencil = 0.f;
         };
 
+        struct ConstantBufferBinding
+        {
+            uint32_t slot = 0;
+            const Buffer* buffer = nullptr;
+            uint32_t resource = UINT32_MAX;
+        };
+
+        struct RootConstantsBinding
+        {
+            uint32_t offset = 0;
+            std::vector<uint8_t> data;
+        };
+
+        struct ResourceIndexBinding
+        {
+            uint32_t offset = 0;
+            uint32_t resource = UINT32_MAX;
+        };
+
+        struct IndexBufferBinding
+        {
+            const Buffer* buffer = nullptr;
+            uint32_t resource = UINT32_MAX;
+            Format format = Format::R32_UInt;
+        };
+
+        struct DrawCommand
+        {
+            uint32_t vertex_count = 0;
+            uint32_t instance_count = 1;
+            uint32_t first_vertex = 0;
+            uint32_t first_instance = 0;
+        };
+
+        struct DrawIndexedCommand
+        {
+            uint32_t index_count = 0;
+            uint32_t instance_count = 1;
+            uint32_t first_index = 0;
+            uint32_t vertex_offset = 0;
+            uint32_t first_instance = 0;
+        };
+
+        struct DispatchMeshCommand
+        {
+            DispatchGroup group{};
+        };
+
+        struct DispatchCommand
+        {
+            DispatchGroup group{};
+        };
+
+        struct BlitCommand
+        {
+            uint32_t source = UINT32_MAX;
+            uint32_t destination = UINT32_MAX;
+            BlitRegion region{};
+        };
+
+        struct CopyTextureCommand
+        {
+            uint32_t source = UINT32_MAX;
+            uint32_t destination = UINT32_MAX;
+        };
+
+        struct CopyBufferCommand
+        {
+            uint32_t source = UINT32_MAX;
+            uint32_t destination = UINT32_MAX;
+            uint64_t source_offset = 0;
+            uint64_t destination_offset = 0;
+            uint64_t size = UINT64_MAX;
+        };
+
+        struct CopyBufferToTextureCommand
+        {
+            uint32_t source = UINT32_MAX;
+            uint32_t destination = UINT32_MAX;
+            BufferTextureCopy region{};
+        };
+
+        using PassCommand = std::variant<DrawCommand,
+                                         DrawIndexedCommand,
+                                         DispatchMeshCommand,
+                                         DispatchCommand,
+                                         BlitCommand,
+                                         CopyTextureCommand,
+                                         CopyBufferCommand,
+                                         CopyBufferToTextureCommand>;
+
         struct Pass
         {
             std::string name;
@@ -182,6 +277,15 @@ namespace RM
             std::vector<ResourceUsage> usages;
             std::vector<ColorTarget> color_targets;
             std::optional<DepthTarget> depth_target;
+            const Pipeline* pipeline = nullptr;
+            std::vector<ConstantBufferBinding> constant_buffers;
+            std::vector<RootConstantsBinding> root_constants;
+            std::vector<ResourceIndexBinding> resource_indices;
+            std::optional<IndexBufferBinding> index_buffer;
+            std::optional<PrimitiveTopology> topology;
+            std::optional<Viewport> viewport;
+            std::optional<Rect> scissor;
+            std::vector<PassCommand> commands;
             GraphExecuteFunction execute;
             bool side_effect = false;
             bool parallel = false;
@@ -266,6 +370,7 @@ namespace RM
         [[nodiscard]] Result<void> RecordStep(Command* command,
                                               const Step& step,
                                               const Step* previous);
+        [[nodiscard]] Result<void> RecordPass(Command* command, uint32_t pass_index, UInt2 area);
         [[nodiscard]] Result<void> Transition(const ResourceUsage& usage,
                                               std::vector<TextureBarrier>& textures,
                                               std::vector<BufferBarrier>& buffers);
@@ -311,6 +416,11 @@ namespace RM
         Derived& Self()
         {
             return static_cast<Derived&>(*this);
+        }
+
+        RenderGraph::Pass& Pass()
+        {
+            return m_graph->m_passes[m_pass];
         }
 
         void Use(GraphTexture texture,
@@ -412,6 +522,57 @@ namespace RM
             return this->Self();
         }
 
+        Derived& Pipeline(const Pipeline* pipeline)
+        {
+            this->Pass().pipeline = pipeline;
+            return this->Self();
+        }
+
+        Derived& ConstantBuffer(uint32_t slot, const Buffer* buffer)
+        {
+            this->Pass().constant_buffers.push_back({.slot = slot, .buffer = buffer});
+            return this->Self();
+        }
+
+        Derived& ConstantBuffer(uint32_t slot, GraphBuffer buffer)
+        {
+            this->Use(buffer,
+                      BarrierStage::None,
+                      BarrierAccess::ConstantBuffer,
+                      true,
+                      false,
+                      false);
+            this->Pass().constant_buffers.push_back({.slot = slot, .resource = buffer.index});
+            return this->Self();
+        }
+
+        Derived& RootConstants(const void* data, uint32_t size, uint32_t offset = 0)
+        {
+            const auto* bytes = static_cast<const uint8_t*>(data);
+            this->Pass().root_constants.push_back(
+                {.offset = offset, .data = std::vector<uint8_t>(bytes, bytes + size)});
+            return this->Self();
+        }
+
+        template <class T>
+            requires(!std::is_pointer_v<T> && std::is_trivially_copyable_v<T>)
+        Derived& RootConstants(const T& value, uint32_t offset = 0)
+        {
+            return RootConstants(&value, sizeof(T), offset);
+        }
+
+        Derived& ResourceIndex(uint32_t offset, GraphTexture texture)
+        {
+            this->Pass().resource_indices.push_back({.offset = offset, .resource = texture.index});
+            return this->Self();
+        }
+
+        Derived& ResourceIndex(uint32_t offset, GraphBuffer buffer)
+        {
+            this->Pass().resource_indices.push_back({.offset = offset, .resource = buffer.index});
+            return this->Self();
+        }
+
     protected:
         GraphShaderPassBuilderBase(RenderGraph* graph, uint32_t pass)
             : GraphPassBuilderBase<Derived>(graph, pass)
@@ -452,8 +613,75 @@ namespace RM
             return *this;
         }
 
+        GraphRenderPassBuilder& Viewport(const Viewport& viewport)
+        {
+            Pass().viewport = viewport;
+            return *this;
+        }
+
+        GraphRenderPassBuilder& Scissor(const Rect& scissor)
+        {
+            Pass().scissor = scissor;
+            return *this;
+        }
+
+        GraphRenderPassBuilder& Topology(PrimitiveTopology topology)
+        {
+            Pass().topology = topology;
+            return *this;
+        }
+
+        GraphRenderPassBuilder& IndexBuffer(const Buffer* buffer, Format format)
+        {
+            Pass().index_buffer = RenderGraph::IndexBufferBinding{
+                .buffer = buffer, .format = format};
+            return *this;
+        }
+
+        GraphRenderPassBuilder& IndexBuffer(GraphBuffer buffer, Format format)
+        {
+            Use(buffer, BarrierStage::IndexInput, BarrierAccess::IndexBuffer, true, false, false);
+            Pass().index_buffer =
+                RenderGraph::IndexBufferBinding{.resource = buffer.index, .format = format};
+            return *this;
+        }
+
+        GraphRenderPassBuilder& Draw(uint32_t vertex_count,
+                                     uint32_t instance_count = 1,
+                                     uint32_t first_vertex = 0,
+                                     uint32_t first_instance = 0)
+        {
+            Pass().commands.push_back(RenderGraph::DrawCommand{.vertex_count = vertex_count,
+                                                               .instance_count = instance_count,
+                                                               .first_vertex = first_vertex,
+                                                               .first_instance = first_instance});
+            return *this;
+        }
+
+        GraphRenderPassBuilder& DrawIndexed(uint32_t index_count,
+                                            uint32_t instance_count = 1,
+                                            uint32_t first_index = 0,
+                                            uint32_t vertex_offset = 0,
+                                            uint32_t first_instance = 0)
+        {
+            Pass().commands.push_back(
+                RenderGraph::DrawIndexedCommand{.index_count = index_count,
+                                                .instance_count = instance_count,
+                                                .first_index = first_index,
+                                                .vertex_offset = vertex_offset,
+                                                .first_instance = first_instance});
+            return *this;
+        }
+
+        GraphRenderPassBuilder& DispatchMesh(DispatchGroup group)
+        {
+            Pass().commands.push_back(RenderGraph::DispatchMeshCommand{.group = group});
+            return *this;
+        }
+
     private:
         friend class RenderGraph;
+
         GraphRenderPassBuilder(RenderGraph* graph, uint32_t pass)
             : GraphShaderPassBuilderBase(graph, pass)
         {
@@ -469,8 +697,15 @@ namespace RM
             return *this;
         }
 
+        GraphComputePassBuilder& Dispatch(DispatchGroup group)
+        {
+            Pass().commands.push_back(RenderGraph::DispatchCommand{.group = group});
+            return *this;
+        }
+
     private:
         friend class RenderGraph;
+
         GraphComputePassBuilder(RenderGraph* graph, uint32_t pass)
             : GraphShaderPassBuilderBase(graph, pass)
         {
@@ -540,8 +775,67 @@ namespace RM
             return *this;
         }
 
+        GraphCopyPassBuilder& Blit(GraphTexture source,
+                                   GraphTexture destination,
+                                   const BlitRegion& region = {})
+        {
+            BlitSource(source);
+            BlitDestination(destination);
+            Pass().commands.push_back(RenderGraph::BlitCommand{.source = source.index,
+                                                               .destination = destination.index,
+                                                               .region = region});
+            return *this;
+        }
+
+        GraphCopyPassBuilder& CopyTexture(GraphTexture source, GraphTexture destination)
+        {
+            CopySource(source);
+            CopyDestination(destination);
+            Pass().commands.push_back(
+                RenderGraph::CopyTextureCommand{.source = source.index,
+                                                .destination = destination.index});
+            return *this;
+        }
+
+        GraphCopyPassBuilder& CopyBuffer(GraphBuffer source,
+                                         GraphBuffer destination,
+                                         uint64_t source_offset = 0,
+                                         uint64_t destination_offset = 0,
+                                         uint64_t size = UINT64_MAX)
+        {
+            CopySource(source);
+            CopyDestination(destination);
+            Pass().commands.push_back(
+                RenderGraph::CopyBufferCommand{.source = source.index,
+                                               .destination = destination.index,
+                                               .source_offset = source_offset,
+                                               .destination_offset = destination_offset,
+                                               .size = size});
+            return *this;
+        }
+
+        GraphCopyPassBuilder& CopyBufferToTexture(GraphBuffer source,
+                                                  GraphTexture destination,
+                                                  const BufferTextureCopy& region)
+        {
+            CopySource(source);
+            Use(destination,
+                BarrierLayout::CopyDestination,
+                BarrierStage::Copy,
+                BarrierAccess::CopyDestination,
+                false,
+                true,
+                false);
+            Pass().commands.push_back(
+                RenderGraph::CopyBufferToTextureCommand{.source = source.index,
+                                                        .destination = destination.index,
+                                                        .region = region});
+            return *this;
+        }
+
     private:
         friend class RenderGraph;
+
         GraphCopyPassBuilder(RenderGraph* graph, uint32_t pass)
             : GraphPassBuilderBase(graph, pass)
         {

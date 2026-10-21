@@ -68,6 +68,9 @@ namespace RM
             const BufferCreateInfo& info,
             HeapMemory memory = HeapMemory::DeviceLocal) const;
 
+        [[nodiscard]] TextureCopyFootprint GetCopyFootprint(const Texture* texture,
+                                                            uint32_t mip_level = 0) const;
+
         [[nodiscard]] Result<RenderGraph*> CreateRenderGraph(
             const RenderGraphCreateInfo& info = {});
         void DestroyRenderGraph(const RenderGraph* render_graph) const;
@@ -112,6 +115,11 @@ namespace RM
         }
         ResidencySet* m_core_residency_set = nullptr;
         Queue* m_graphics_queue = nullptr;
+        Command* m_upload_command = nullptr;
+        Fence* m_upload_fence = nullptr;
+        uint64_t m_upload_value = 0;
+
+        [[nodiscard]] Result<void> UploadTexture(Texture* texture, const void* data);
 
         [[nodiscard]] Result<uint32_t> AddDescriptor(const Buffer* buffer);
         [[nodiscard]] Result<uint32_t> AddDescriptor(Sampler* sampler);

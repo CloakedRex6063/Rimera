@@ -1,11 +1,11 @@
 #include "rimera_device.hpp"
 #include "window.hpp"
+#include "camera.hpp"
 #include "model.hpp"
 #include "fileio.hpp"
 #include "rimera_builders.hpp"
 #include "rimera_render_graph.hpp"
-#include "glm/ext/matrix_clip_space.hpp"
-#include "glm/ext/matrix_transform.hpp"
+#include "chrono"
 
 struct MeshShaderScene
 {
@@ -33,7 +33,6 @@ struct MeshShaderScene
 
     struct SceneData
     {
-        glm::mat4 view_projection;
         uint32_t draw_buffer_index;
         uint32_t transform_buffer_index;
         uint32_t material_buffer_index;
@@ -42,7 +41,7 @@ struct MeshShaderScene
         uint32_t padding[3]{};
     };
 
-    static_assert(sizeof(SceneData) == 96);
+    static_assert(sizeof(SceneData) == 32);
 
     static constexpr auto kVisibilityFormat = RM::Format::R32_UInt;
     static constexpr auto kColorFormat = RM::Format::RGBA8_UNorm;
@@ -131,13 +130,7 @@ struct MeshShaderScene
         if (texture_indices.empty()) texture_indices.push_back(UINT32_MAX);
         if (auto result = Upload(texture_indices, texture_buffer); !result) return result;
 
-        constexpr auto center = glm::vec3();
-        const float aspect = static_cast<float>(size.x) / size.y;
-        constexpr float fov = glm::radians(45.f);
-        const auto view = glm::lookAtRH(center + glm::vec3(0, 0, 5), center, glm::vec3(0, 1, 0));
-        const auto projection = glm::perspectiveRH_ZO(fov, aspect, .01f, 1000.f);
-        SceneData scene{.view_projection = projection * view,
-                        .draw_buffer_index = draw_buffer->GetResourceIndex(),
+        SceneData scene{.draw_buffer_index = draw_buffer->GetResourceIndex(),
                         .transform_buffer_index = transform_buffer->GetResourceIndex(),
                         .material_buffer_index = material_buffer->GetResourceIndex(),
                         .texture_buffer_index = texture_buffer->GetResourceIndex(),
@@ -177,37 +170,6 @@ struct MeshShaderScene
         visualize_pipeline = *visualize_result;
         residency->Commit();
         return {};
-    }
-
-    RM::Result<void> DrawModel(RM::Command* command) const
-    {
-        if (auto result = command->BindShader(pipeline); !result) return result;
-        if (auto result = command->BindConstantBuffer(0, scene_buffer); !result) return result;
-        command->SetViewport({.size = {size.x, size.y}, .depth_range = {.x = 0, .y = 1}});
-        command->SetScissor({.size = {size.x, size.y}});
-        return command->DispatchMesh({.x = meshlet_count, .y = 1, .z = 1});
-    }
-
-    RM::Result<void> Visualize(RM::Command* command,
-                               const RM::Texture* visibility,
-                               const RM::Texture* color) const
-    {
-        struct
-        {
-            uint32_t visibility_index;
-            uint32_t color_index;
-            uint32_t width;
-            uint32_t height;
-        } constants{
-            .visibility_index = visibility->GetResourceIndex(RM::TextureViewType::ShaderRead),
-            .color_index = color->GetResourceIndex(RM::TextureViewType::ShaderReadWrite),
-            .width = size.x,
-            .height = size.y,
-        };
-        if (auto result = command->BindShader(visualize_pipeline); !result) return result;
-        if (auto result = command->BindRootConstants(&constants, sizeof(constants)); !result)
-            return result;
-        return command->Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
     }
 
     void Cleanup()
@@ -306,10 +268,25 @@ int main()
     int exit_code = 0;
     constexpr RM::ResourceState present{.layout = RM::BarrierLayout::Present};
 
+    Camera camera;
+    camera.LookAt({0.f, 0.f, 5.f}, {0.f, 0.f, 0.f});
+    auto previous_time = std::chrono::steady_clock::now();
+
     while (window->IsRunning())
     {
         window->Tick();
         if (!window->IsRunning()) break;
+
+        const auto time = std::chrono::steady_clock::now();
+        const float delta_time = std::chrono::duration<float>(time - previous_time).count();
+        previous_time = time;
+
+        if (window->IsKeyPressed(Key::Tab))
+            camera.SetMode(camera.GetMode() == CameraMode::Orbit
+                               ? CameraMode::Fly
+                               : CameraMode::Orbit);
+        camera.Update(*window, delta_time);
+        const glm::mat4 view_projection = camera.GetViewProjection();
 
         auto* queue = device->GetGraphicsQueue();
         if (auto result = device->NewFrame(queue); !result)
@@ -340,30 +317,21 @@ int main()
                     RM::StoreOp::Store,
                     {.r = 0, .g = 0, .b = 0, .a = 0})
              .Depth(depth, RM::LoadOp::Clear, RM::StoreOp::DontCare)
-             .Execute([&](const RM::RenderGraphContext& context)
-             {
-                 return scene.DrawModel(context.GetCommand());
-             });
+             .Pipeline(scene.pipeline)
+             .ConstantBuffer(0, scene.scene_buffer)
+             .RootConstants(view_projection)
+             .DispatchMesh({.x = scene.meshlet_count, .y = 1, .z = 1});
 
         graph->AddComputePass("Visualize")
              .Read(visibility)
              .Write(color)
-             .Execute([&](const RM::RenderGraphContext& context)
-             {
-                 return scene.Visualize(context.GetCommand(),
-                                        context.GetTexture(visibility),
-                                        context.GetTexture(color));
-             });
+             .Pipeline(scene.visualize_pipeline)
+             .ResourceIndex(0, visibility)
+             .ResourceIndex(4, color)
+             .RootConstants(size, 8)
+             .Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
 
-        graph->AddCopyPass("Backbuffer Blit")
-             .BlitSource(color)
-             .BlitDestination(output)
-             .Execute(
-                 [&](const RM::RenderGraphContext& context)
-                 {
-                     return context.GetCommand()->Blit(context.GetTexture(color),
-                                                       context.GetTexture(output));
-                 });
+        graph->AddCopyPass("Backbuffer Blit").Blit(color, output);
 
         if (auto result = graph->Execute(command); !result)
         {

@@ -221,7 +221,6 @@ namespace RM
         Format format = Format::RGBA8_UNorm;
         EnumFlags<TextureUsage> usage{};
         const void* initial_data = nullptr;
-        uint32_t bytes_per_row = 0;
     };
 
     enum class BufferFlags
@@ -666,6 +665,21 @@ namespace RM
         Rect src_rect;
         Rect dst_rect;
         uint32_t src_mip;
+    };
+
+    struct BufferTextureCopy
+    {
+        uint64_t buffer_offset = 0;
+        uint32_t mip_level = 0;
+        uint32_t array_layer = 0;
+    };
+
+    struct TextureCopyFootprint
+    {
+        uint32_t bytes_per_row = 0;
+        uint32_t row_size = 0;
+        uint32_t row_count = 0;
+        uint64_t size = 0;
     };
 
     enum class ReductionType

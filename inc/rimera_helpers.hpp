@@ -8,6 +8,14 @@ namespace RM
 
     namespace Helpers
     {
+        struct FormatBlockInfo
+        {
+            uint32_t bytes = 0;
+            uint32_t width = 1;
+            uint32_t height = 1;
+        };
+
+        [[nodiscard]] FormatBlockInfo GetFormatBlockInfo(Format format) noexcept;
         [[nodiscard]] Result<Pipeline*> CreateBlitShader(Device* device, Format format);
         [[nodiscard]] Result<void> CheckDxc(HRESULT result, const char* operation);
         [[nodiscard]] Result<IDxcBlob*> CompileHlsl(std::string_view source,

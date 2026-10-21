@@ -3,6 +3,7 @@
 #include "rimera_command.hpp"
 #include "rimera_device.hpp"
 #include "rimera_heap.hpp"
+#include "rimera_shader.hpp"
 
 namespace
 {
@@ -78,16 +79,6 @@ namespace
                 .first_array_layer = 0,
                 .num_array_layers = texture->GetArrayLayers()};
     }
-}
-
-RM::Result<RM::RenderGraph*> RM::Device::CreateRenderGraph(const RenderGraphCreateInfo& info)
-{
-    return CreateObject<RenderGraph>(this, info);
-}
-
-void RM::Device::DestroyRenderGraph(const RenderGraph* render_graph) const
-{
-    delete render_graph;
 }
 
 RM::Texture* RM::RenderGraphContext::GetTexture(GraphTexture texture) const
@@ -878,14 +869,10 @@ RM::Result<void> RM::RenderGraph::RecordStep(Command* command,
             }
 
             command->BeginRenderPass(builder.Build());
-            command->SetViewport({.offset = {}, .size = size, .depth_range = {.x = 0.f, .y = 1.f}});
-            command->SetScissor({.offset = {}, .size = size});
-            Result<void> result{};
-            if (pass.execute)
-            {
-                RenderGraphContext context(this, command, pass_index, size);
-                result = pass.execute(context);
-            }
+            command->SetViewport(pass.viewport.value_or(
+                Viewport{.offset = {}, .size = size, .depth_range = {.x = 0.f, .y = 1.f}}));
+            command->SetScissor(pass.scissor.value_or(Rect{.offset = {}, .size = size}));
+            auto result = RecordPass(command, pass_index, size);
             command->EndRenderPass();
             if (!result) return fail(pass_index, result.error());
             break;
@@ -895,10 +882,7 @@ RM::Result<void> RM::RenderGraph::RecordStep(Command* command,
             command->BeginComputePass();
             for (const auto pass_index : step.passes)
             {
-                const auto& pass = m_passes[pass_index];
-                if (!pass.execute) continue;
-                RenderGraphContext context(this, command, pass_index, {});
-                if (auto result = pass.execute(context); !result)
+                if (auto result = RecordPass(command, pass_index, {}); !result)
                 {
                     command->EndComputePass();
                     return fail(pass_index, result.error());
@@ -910,13 +894,133 @@ RM::Result<void> RM::RenderGraph::RecordStep(Command* command,
         case GraphPassType::Copy:
         {
             const auto pass_index = step.passes.front();
-            const auto& pass = m_passes[pass_index];
-            if (!pass.execute) break;
-            RenderGraphContext context(this, command, pass_index, {});
-            if (auto result = pass.execute(context); !result)
+            if (auto result = RecordPass(command, pass_index, {}); !result)
                 return fail(pass_index, result.error());
             break;
         }
+    }
+    return {};
+}
+
+RM::Result<void> RM::RenderGraph::RecordPass(Command* command, uint32_t pass_index, UInt2 area)
+{
+    const auto& pass = m_passes[pass_index];
+    if (pass.pipeline)
+    {
+        if (auto result = command->BindShader(pass.pipeline); !result) return result;
+    }
+    for (const auto& binding : pass.constant_buffers)
+    {
+        const Buffer* buffer = binding.resource == UINT32_MAX
+                                   ? binding.buffer
+                                   : m_resources[binding.resource].buffer;
+        if (auto result = command->BindConstantBuffer(binding.slot, buffer); !result)
+            return result;
+    }
+    for (const auto& binding : pass.root_constants)
+    {
+        if (auto result = command->BindRootConstants(binding.data.data(),
+                                                     static_cast<uint32_t>(binding.data.size()),
+                                                     binding.offset);
+            !result)
+            return result;
+    }
+    for (const auto& binding : pass.resource_indices)
+    {
+        if (binding.resource >= m_resources.size())
+            return std::unexpected("uses an invalid resource handle for a resource index");
+        const auto& resource = m_resources[binding.resource];
+        uint32_t index = UINT32_MAX;
+        if (resource.type == ResourceType::Buffer)
+        {
+            index = resource.buffer->GetResourceIndex();
+        }
+        else
+        {
+            const auto usage =
+                std::ranges::find(pass.usages, binding.resource, &ResourceUsage::resource);
+            if (usage == pass.usages.end())
+                return std::unexpected("needs a resource index of texture '" + resource.name +
+                                       "' which the pass does not use");
+            switch (usage->state.layout)
+            {
+                case BarrierLayout::ShaderResource:
+                    index = resource.texture->GetResourceIndex(TextureViewType::ShaderRead);
+                    break;
+                case BarrierLayout::UnorderedAccess:
+                    index = resource.texture->GetResourceIndex(TextureViewType::ShaderReadWrite);
+                    break;
+                default:
+                    return std::unexpected("needs a resource index of texture '" + resource.name +
+                                           "' which the pass does not read or write in a shader");
+            }
+        }
+        if (auto result = command->BindRootConstants(&index, sizeof(index), binding.offset);
+            !result)
+            return result;
+    }
+    if (pass.index_buffer)
+    {
+        const Buffer* buffer = pass.index_buffer->resource == UINT32_MAX
+                                   ? pass.index_buffer->buffer
+                                   : m_resources[pass.index_buffer->resource].buffer;
+        if (auto result = command->BindIndexBuffer(buffer, pass.index_buffer->format); !result)
+            return result;
+    }
+    bool draws = false;
+    for (const auto& pass_command : pass.commands)
+        draws = draws || std::holds_alternative<DrawCommand>(pass_command) ||
+                std::holds_alternative<DrawIndexedCommand>(pass_command);
+    if (pass.topology || draws)
+        command->SetPrimitiveTopology(pass.topology.value_or(PrimitiveTopology::TriangleList));
+
+    if (pass.execute)
+    {
+        RenderGraphContext context(this, command, pass_index, area);
+        if (auto result = pass.execute(context); !result) return result;
+    }
+
+    for (const auto& pass_command : pass.commands)
+    {
+        auto result = std::visit(
+            [&](const auto& recorded) -> Result<void>
+            {
+                using T = std::decay_t<decltype(recorded)>;
+                if constexpr (std::is_same_v<T, DrawCommand>)
+                    return command->Draw(recorded.vertex_count,
+                                         recorded.instance_count,
+                                         recorded.first_vertex,
+                                         recorded.first_instance);
+                else if constexpr (std::is_same_v<T, DrawIndexedCommand>)
+                    return command->DrawIndexed(recorded.index_count,
+                                                recorded.instance_count,
+                                                recorded.first_index,
+                                                recorded.vertex_offset,
+                                                recorded.first_instance);
+                else if constexpr (std::is_same_v<T, DispatchMeshCommand>)
+                    return command->DispatchMesh(recorded.group);
+                else if constexpr (std::is_same_v<T, DispatchCommand>)
+                    return command->Dispatch(recorded.group);
+                else if constexpr (std::is_same_v<T, BlitCommand>)
+                    return command->Blit(m_resources[recorded.source].texture,
+                                         m_resources[recorded.destination].texture,
+                                         recorded.region);
+                else if constexpr (std::is_same_v<T, CopyTextureCommand>)
+                    return command->CopyTexture(m_resources[recorded.source].texture,
+                                                m_resources[recorded.destination].texture);
+                else if constexpr (std::is_same_v<T, CopyBufferCommand>)
+                    return command->CopyBuffer(m_resources[recorded.source].buffer,
+                                               m_resources[recorded.destination].buffer,
+                                               recorded.source_offset,
+                                               recorded.destination_offset,
+                                               recorded.size);
+                else
+                    return command->CopyBufferToTexture(m_resources[recorded.source].buffer,
+                                                        m_resources[recorded.destination].texture,
+                                                        recorded.region);
+            },
+            pass_command);
+        if (!result) return result;
     }
     return {};
 }

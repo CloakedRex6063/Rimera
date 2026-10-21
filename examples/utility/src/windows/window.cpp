@@ -1,4 +1,5 @@
 #include "window.hpp"
+#include "optional"
 
 namespace
 {
@@ -35,6 +36,59 @@ namespace
         if (!RegisterClassExW(&wc)) return std::unexpected("Failed to register window class");
         registered = true;
         return {};
+    }
+
+    std::optional<Key> ToKey(WPARAM virtual_key)
+    {
+        if (virtual_key >= 'A' && virtual_key <= 'Z')
+            return static_cast<Key>(static_cast<uint32_t>(Key::A) + (virtual_key - 'A'));
+        if (virtual_key >= '0' && virtual_key <= '9')
+            return static_cast<Key>(static_cast<uint32_t>(Key::Num0) + (virtual_key - '0'));
+        switch (virtual_key)
+        {
+            case VK_SPACE:
+                return Key::Space;
+            case VK_RETURN:
+                return Key::Enter;
+            case VK_ESCAPE:
+                return Key::Escape;
+            case VK_TAB:
+                return Key::Tab;
+            case VK_SHIFT:
+                return Key::Shift;
+            case VK_CONTROL:
+                return Key::Control;
+            case VK_MENU:
+                return Key::Alt;
+            case VK_LEFT:
+                return Key::Left;
+            case VK_RIGHT:
+                return Key::Right;
+            case VK_UP:
+                return Key::Up;
+            case VK_DOWN:
+                return Key::Down;
+            default:
+                return std::nullopt;
+        }
+    }
+
+    std::optional<MouseButton> ToMouseButton(UINT message)
+    {
+        switch (message)
+        {
+            case WM_LBUTTONDOWN:
+            case WM_LBUTTONUP:
+                return MouseButton::Left;
+            case WM_RBUTTONDOWN:
+            case WM_RBUTTONUP:
+                return MouseButton::Right;
+            case WM_MBUTTONDOWN:
+            case WM_MBUTTONUP:
+                return MouseButton::Middle;
+            default:
+                return std::nullopt;
+        }
     }
 
     glm::uvec2 GetWindowClientSize(HWND hwnd)
@@ -103,6 +157,15 @@ RM::Result<void> Window::Initialize()
     ShowWindow(hwnd, SW_SHOW);
     UpdateWindow(hwnd);
 
+    const RAWINPUTDEVICE mouse{
+        .usUsagePage = 0x01,
+        .usUsage = 0x02,
+        .dwFlags = 0,
+        .hwndTarget = hwnd,
+    };
+    if (!RegisterRawInputDevices(&mouse, 1, sizeof(mouse)))
+        return std::unexpected("Failed to register raw mouse input");
+
     m_window = hwnd;
     m_running = true;
     m_size = GetWindowClientSize(hwnd);
@@ -131,14 +194,67 @@ void Window::Tick()
     const auto previous_size = m_size;
     auto hwnd = static_cast<HWND>(m_window);
 
+    BeginInput();
+
     if (hwnd != nullptr && IsWindow(hwnd))
     {
         MSG msg{};
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
-            if (msg.message == WM_QUIT)
+            switch (msg.message)
             {
-                m_running = false;
+                case WM_QUIT:
+                    m_running = false;
+                    break;
+                case WM_KEYDOWN:
+                case WM_SYSKEYDOWN:
+                case WM_KEYUP:
+                case WM_SYSKEYUP:
+                    if (auto key = ToKey(msg.wParam))
+                        SetKey(*key, msg.message == WM_KEYDOWN || msg.message == WM_SYSKEYDOWN);
+                    break;
+                case WM_LBUTTONDOWN:
+                case WM_RBUTTONDOWN:
+                case WM_MBUTTONDOWN:
+                    SetMouseButton(*ToMouseButton(msg.message), true);
+                    SetCapture(hwnd);
+                    break;
+                case WM_LBUTTONUP:
+                case WM_RBUTTONUP:
+                case WM_MBUTTONUP:
+                    SetMouseButton(*ToMouseButton(msg.message), false);
+                    if (!IsMouseButtonDown(MouseButton::Left) &&
+                        !IsMouseButtonDown(MouseButton::Right) &&
+                        !IsMouseButtonDown(MouseButton::Middle))
+                        ReleaseCapture();
+                    break;
+                case WM_MOUSEMOVE:
+                    m_mouse_position = {static_cast<short>(LOWORD(msg.lParam)),
+                                        static_cast<short>(HIWORD(msg.lParam))};
+                    break;
+                case WM_MOUSEWHEEL:
+                    m_scroll_delta += static_cast<float>(GET_WHEEL_DELTA_WPARAM(msg.wParam)) /
+                                      static_cast<float>(WHEEL_DELTA);
+                    break;
+                case WM_INPUT:
+                {
+                    RAWINPUT raw{};
+                    UINT size = sizeof(raw);
+                    if (GetRawInputData(reinterpret_cast<HRAWINPUT>(msg.lParam),
+                                        RID_INPUT,
+                                        &raw,
+                                        &size,
+                                        sizeof(RAWINPUTHEADER)) != static_cast<UINT>(-1) &&
+                        raw.header.dwType == RIM_TYPEMOUSE &&
+                        !(raw.data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE))
+                    {
+                        m_mouse_delta += glm::vec2(static_cast<float>(raw.data.mouse.lLastX),
+                                                   static_cast<float>(raw.data.mouse.lLastY));
+                    }
+                    break;
+                }
+                default:
+                    break;
             }
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
@@ -147,6 +263,10 @@ void Window::Tick()
         if (!IsWindow(hwnd))
         {
             m_running = false;
+        }
+        else if (GetForegroundWindow() != hwnd)
+        {
+            ClearInput();
         }
     }
     else

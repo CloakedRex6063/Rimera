@@ -20,25 +20,13 @@ RM::Result<void> RM::Texture::Initialize(Device* device, const TextureCreateInfo
     m_layer_count = info.array_layers;
     m_device = device;
     auto descriptor = Metal::CreateTextureDescriptor(info);
-    if (info.initial_data)
-    {
-        if (info.array_layers != 1 || !info.width || !info.height ||
-            (info.format != Format::RGBA8_UNorm && info.format != Format::RGBA8_UNorm_sRGB) ||
-            static_cast<uint64_t>(info.bytes_per_row) < static_cast<uint64_t>(info.width) * 4)
-            return std::unexpected("Invalid initial texture upload");
-        descriptor->setStorageMode(MTL::StorageModeShared);
-    }
     auto* native_device = static_cast<MTL::Device*>(m_device->GetNativeHandle());
     m_texture = NS::TransferPtr(native_device->newTexture(descriptor.get()));
     if (!m_texture) return std::unexpected("Metal texture allocation failed");
-    if (info.initial_data)
-        m_texture->replaceRegion(MTL::Region::Make2D(0, 0, info.width, info.height),
-                                 0,
-                                 info.initial_data,
-                                 info.bytes_per_row);
     auto resource_index_result = m_device->AddDescriptor(this);
     if (!resource_index_result) return std::unexpected(resource_index_result.error());
     m_resource_index = std::move(*resource_index_result);
+    if (info.initial_data) return m_device->UploadTexture(this, info.initial_data);
     return {};
 }
 

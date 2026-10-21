@@ -49,13 +49,17 @@ struct Material
 
 cbuffer Scene : register(b0)
 {
-    column_major float4x4 view_projection;
     uint draw_buffer_index;
     uint transform_buffer_index;
     uint material_buffer_index;
     uint texture_buffer_index;
     uint sampler_index;
     uint3 padding;
+};
+
+cbuffer Camera : register(b3)
+{
+    column_major float4x4 view_projection;
 };
 
 struct MeshOutput
@@ -108,7 +112,7 @@ void MSMain(uint group_index : SV_GroupIndex,
         triangles_out[primitive] = uint3(LoadByte(triangles, offset),
                                         LoadByte(triangles, offset + 1),
                                         LoadByte(triangles, offset + 2));
-        prims[primitive].vis_id = ((group_id.x << 7) | primitive) + 1;
+        prims[primitive].vis_id = ((group_id.x << 7) | primitive) + 1; // 0 to identify background
     }
 }
 

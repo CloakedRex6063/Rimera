@@ -44,6 +44,7 @@ RM::Result<void> RM::Texture::Initialize(Device* device, const TextureCreateInfo
                                                               IID_PPV_ARGS(&m_texture));
     if (FAILED(result)) return std::unexpected("D3D12 texture allocation failed");
     if (auto result = CreateDescriptors(); !result) return std::unexpected(result.error());
+    if (info.initial_data) return m_device->UploadTexture(this, info.initial_data);
     return {};
 }
 

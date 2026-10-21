@@ -77,8 +77,7 @@ RM::Result<void> Texture::Upload(RM::Device* device,
          .height = m_height,
          .format = srgb ? RM::Format::RGBA8_UNorm_sRGB : RM::Format::RGBA8_UNorm,
          .usage = {RM::TextureUsage::ShaderRead},
-         .initial_data = pixels,
-         .bytes_per_row = m_width * 4});
+         .initial_data = pixels});
     if (!texture) return std::unexpected(texture.error());
     m_device = device;
     m_texture = *texture;

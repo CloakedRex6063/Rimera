@@ -365,6 +365,46 @@ RM::Result<void> RM::Command::CopyTexture(const Texture* source, const Texture* 
     return {};
 }
 
+RM::Result<void> RM::Command::CopyBufferToTexture(const Buffer* source,
+                                                  const Texture* dest,
+                                                  const BufferTextureCopy& region)
+{
+#ifdef RIMERA_DEBUG
+    if (!source || !dest) return std::unexpected("Cannot copy between null resources");
+    if (region.mip_level >= dest->GetMipLevels() || region.array_layer >= dest->GetArrayLayers())
+        return std::unexpected("Buffer to texture copy subresource is out of bounds");
+    if (region.buffer_offset % D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT)
+        return std::unexpected("Buffer to texture copies need a buffer offset aligned to 512");
+#endif
+    const auto footprint = m_device->GetCopyFootprint(dest, region.mip_level);
+    auto* dest_resource = static_cast<ID3D12Resource*>(dest->GetNativeHandle());
+    const auto desc = dest_resource->GetDesc();
+    const auto size = dest->GetDimensions();
+
+    D3D12_TEXTURE_COPY_LOCATION src{};
+    src.pResource = static_cast<ID3D12Resource*>(source->GetNativeHandle());
+    src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src.PlacedFootprint = {
+        .Offset = region.buffer_offset,
+        .Footprint =
+        {
+            .Format = D3D12::GetFormat(dest->GetFormat()),
+            .Width = std::max(1u, size.x >> region.mip_level),
+            .Height = std::max(1u, size.y >> region.mip_level),
+            .Depth = 1,
+            .RowPitch = footprint.bytes_per_row,
+        },
+    };
+
+    D3D12_TEXTURE_COPY_LOCATION dst{};
+    dst.pResource = dest_resource;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.SubresourceIndex = dest->GetBaseMip() + region.mip_level +
+                           (dest->GetBaseLayer() + region.array_layer) * desc.MipLevels;
+    m_command_buffer->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+    return {};
+}
+
 RM::Result<void> RM::Command::CopyBuffer(const Buffer* source,
                                          const Buffer* dest,
                                          uint64_t source_offset,

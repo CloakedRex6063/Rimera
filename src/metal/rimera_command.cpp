@@ -399,6 +399,35 @@ RM::Result<void> RM::Command::CopyTexture(const Texture* source, const Texture* 
     return {};
 }
 
+RM::Result<void> RM::Command::CopyBufferToTexture(const Buffer* source,
+                                                  const Texture* dest,
+                                                  const BufferTextureCopy& region)
+{
+#ifdef RIMERA_DEBUG
+    if (!source || !dest) return std::unexpected("Cannot copy between null resources");
+    if (region.mip_level >= dest->GetMipLevels() || region.array_layer >= dest->GetArrayLayers())
+        return std::unexpected("Buffer to texture copy subresource is out of bounds");
+#endif
+    const auto footprint = m_device->GetCopyFootprint(dest, region.mip_level);
+    if (!footprint.size) return std::unexpected("Texture format does not support buffer copies");
+    const auto size = dest->GetDimensions();
+    const uint32_t width = std::max(1u, size.x >> region.mip_level);
+    const uint32_t height = std::max(1u, size.y >> region.mip_level);
+    const bool transient = !m_compute_encoder;
+    if (transient) GetComputeEncoder();
+    m_compute_encoder->copyFromBuffer(static_cast<MTL::Buffer*>(source->GetNativeHandle()),
+                                      region.buffer_offset,
+                                      footprint.bytes_per_row,
+                                      footprint.size,
+                                      MTL::Size(width, height, 1),
+                                      static_cast<MTL::Texture*>(dest->GetNativeHandle()),
+                                      region.array_layer,
+                                      region.mip_level,
+                                      MTL::Origin(0, 0, 0));
+    EndTransientComputeEncoder(transient);
+    return {};
+}
+
 RM::Result<void> RM::Command::CopyBuffer(const Buffer* source,
                                          const Buffer* dest,
                                          uint64_t source_offset,
