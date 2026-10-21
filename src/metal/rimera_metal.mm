@@ -880,21 +880,38 @@ bool RM::Metal::SupportsHDR(void* window)
         screen.maximumPotentialExtendedDynamicRangeColorComponentValue > 1.0;
 }
 
+RM::DisplayInfo RM::Metal::GetDisplayInfo(void* window)
+{
+    auto ns_window = (__bridge NSWindow*)window;
+    NSScreen* screen = ns_window.screen;
+    if (!screen || screen.maximumPotentialExtendedDynamicRangeColorComponentValue <= 1.0)
+        return {};
+    return {.hdr = true,
+            .headroom = std::max(1.f,
+                                 static_cast<float>(
+                                     screen.maximumExtendedDynamicRangeColorComponentValue)),
+            .sdr_white_scale = 1.f};
+}
+
+void RM::Metal::ConfigureSwapLayer(CA::MetalLayer* swap_layer, bool hdr)
+{
+    swap_layer->setPixelFormat(hdr ? MTL::PixelFormat::PixelFormatRGBA16Float
+                                   : MTL::PixelFormat::PixelFormatBGRA8Unorm);
+    CGColorSpaceRef color_space =
+        CGColorSpaceCreateWithName(hdr ? kCGColorSpaceExtendedLinearSRGB : kCGColorSpaceSRGB);
+    [(__bridge CAMetalLayer*)swap_layer setColorspace:color_space];
+    CGColorSpaceRelease(color_space);
+    swap_layer->setWantsExtendedDynamicRangeContent(hdr);
+}
+
 NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Device>& device, const DeviceCreateInfo& info) {
     auto swap_layer = NS::TransferPtr(CA::MetalLayer::layer());
     auto* ns_window = (NSWindow*)info.window;
     NSView* ns_view = [ns_window contentView];
     [ns_view setWantsLayer:YES];
     [ns_view setLayer:(__bridge CAMetalLayer*)swap_layer.get()];
-    bool supports_hdr = SupportsHDR(info.window);
     swap_layer->setDevice(device.get());
-    swap_layer->setPixelFormat(supports_hdr ? MTL::PixelFormat::PixelFormatBGRA10_XR
-                                            : MTL::PixelFormat::PixelFormatBGRA8Unorm);
-    CGColorSpaceRef color_space = CGColorSpaceCreateWithName(
-        supports_hdr ? kCGColorSpaceExtendedSRGB : kCGColorSpaceSRGB);
-    [(__bridge CAMetalLayer*)swap_layer.get() setColorspace:color_space];
-    CGColorSpaceRelease(color_space);
-    swap_layer->setWantsExtendedDynamicRangeContent(supports_hdr);
+    ConfigureSwapLayer(swap_layer.get(), SupportsHDR(info.window));
     swap_layer->setFramebufferOnly(false);
     swap_layer->setDrawableSize(CGSizeMake((float)info.width, (float)info.height));
     return swap_layer;

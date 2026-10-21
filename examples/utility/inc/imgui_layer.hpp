@@ -29,6 +29,7 @@ public:
     ImGuiLayer& operator=(const ImGuiLayer&) = delete;
 
     void NewFrame(float delta_time);
+    void SetDisplayInfo(const RM::DisplayInfo& info) { m_display_info = info; }
     void AddPass(RM::RenderGraph* graph, RM::GraphTexture target);
     [[nodiscard]] RM::Result<void> Record(RM::Command* command, glm::uvec2 size);
 
@@ -48,9 +49,11 @@ private:
         uint32_t vertex_offset;
         glm::vec2 scale;
         glm::vec2 translate;
+        uint32_t hdr;
+        float sdr_white_scale;
     };
 
-    static_assert(sizeof(Constants) == 32);
+    static_assert(sizeof(Constants) == 40);
 
     struct FrameBuffers
     {
@@ -88,4 +91,5 @@ private:
     RM::Texture* m_font_texture = nullptr;
     std::array<FrameBuffers, kFramesInFlight> m_frames{};
     uint32_t m_frame_index = 0;
+    RM::DisplayInfo m_display_info{};
 };

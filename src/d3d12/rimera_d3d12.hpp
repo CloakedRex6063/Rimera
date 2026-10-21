@@ -11,6 +11,8 @@ namespace RM::D3D12
     void EnableDebugLayer();
 #endif
 
+    float GetSdrWhiteLevel(const wchar_t* device_name);
+
     D3D12_COMMAND_LIST_TYPE GetQueueType(QueueType type);
     D3D12_RESOURCE_DESC GetResourceDesc(const BufferCreateInfo& info);
     D3D12_RESOURCE_DESC GetResourceDesc(const TextureCreateInfo& info);

@@ -97,9 +97,10 @@ RM::Result<void> RM::Texture::Initialize(Device* device,
 
 RM::Result<void> RM::Texture::Initialize(Device* device,
                                          ID3D12Resource* resource,
-                                         EnumFlags<TextureUsage> usage)
+                                         EnumFlags<TextureUsage> usage,
+                                         Format format)
 {
-    m_format = D3D12::GetFormat(resource->GetDesc().Format);
+    m_format = format == Format::Unknown ? D3D12::GetFormat(resource->GetDesc().Format) : format;
     m_usage = usage;
     m_mip_count = resource->GetDesc().MipLevels;
     m_layer_count = resource->GetDesc().DepthOrArraySize;

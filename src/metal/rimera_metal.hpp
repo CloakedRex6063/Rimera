@@ -54,6 +54,8 @@ namespace RM::Metal
     MTL::CompareFunction ToCompareFunction(ComparisonFunc function);
     MTL::SamplerReductionMode ToSamplerReductionMode(ReductionType type);
     bool SupportsHDR(void* window);
+    DisplayInfo GetDisplayInfo(void* window);
+    void ConfigureSwapLayer(CA::MetalLayer* swap_layer, bool hdr);
     NS::SharedPtr<CA::MetalLayer> CreateSwapLayer(NS::SharedPtr<MTL::Device>& device,
                                                   const DeviceCreateInfo& info);
     MTL::Stages ToBarrierStages(BarrierStage stages);

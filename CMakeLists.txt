@@ -81,6 +81,8 @@ elseif (WIN32)
             src/d3d12/rimera_sampler.cpp
             src/d3d12/rimera_heap.cpp
             src/d3d12/rimera_d3d12.cpp)
+    set_source_files_properties(src/d3d12/rimera_d3d12.cpp
+            PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif ()
 
 include(FetchContent)

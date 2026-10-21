@@ -30,6 +30,8 @@ namespace
             uint vertex_offset;
             float2 scale;
             float2 translate;
+            uint hdr;
+            float sdr_white_scale;
         };
 
         struct VSOut
@@ -38,6 +40,11 @@ namespace
             float2 uv : TEXCOORD0;
             float4 color : COLOR0;
         };
+
+        float3 SrgbToLinear(float3 color)
+        {
+            return select(color <= 0.04045, color / 12.92, pow((color + 0.055) / 1.055, 2.4));
+        }
 
         VSOut VSMain(uint vertex_id : SV_VertexID)
         {
@@ -50,6 +57,7 @@ namespace
                                   (vertex.color >> 8) & 0xffu,
                                   (vertex.color >> 16) & 0xffu,
                                   vertex.color >> 24) / 255.0;
+            if (hdr) output.color.rgb = SrgbToLinear(output.color.rgb) * sdr_white_scale;
             return output;
         }
 
@@ -330,6 +338,8 @@ RM::Result<void> ImGuiLayer::Record(RM::Command* command, glm::uvec2 size)
         .vertex_offset = 0,
         .scale = {2.f / display.x, -2.f / display.y},
         .translate = {-1.f - position.x * 2.f / display.x, 1.f + position.y * 2.f / display.y},
+        .hdr = m_display_info.hdr ? 1u : 0u,
+        .sdr_white_scale = m_display_info.sdr_white_scale,
     };
     if (auto result = BindRenderState(command, frame, constants, size); !result) return result;
 

@@ -77,7 +77,8 @@ namespace RM
 #elifdef RIMERA_WINDOWS
         [[nodiscard]] Result<void> Initialize(Device* device,
                                               ID3D12Resource* resource,
-                                              EnumFlags<TextureUsage> usage);
+                                              EnumFlags<TextureUsage> usage,
+                                              Format format = Format::Unknown);
         [[nodiscard]] Result<void> CreateDescriptors();
         ComPtr<D3D12MA::Allocation> m_allocation;
         ComPtr<ID3D12Resource> m_texture;

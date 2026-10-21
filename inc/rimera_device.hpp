@@ -93,6 +93,8 @@ namespace RM
 
         [[nodiscard]] Result<void> Resize(uint32_t width, uint32_t height);
 
+        [[nodiscard]] DisplayInfo GetDisplayInfo();
+
         [[nodiscard]] void* GetNativeHandle() const;
 
     private:
@@ -118,6 +120,8 @@ namespace RM
         Command* m_upload_command = nullptr;
         Fence* m_upload_fence = nullptr;
         uint64_t m_upload_value = 0;
+        void* m_window = nullptr;
+        std::unordered_map<Format, Pipeline*> m_blit_pipelines;
 
         [[nodiscard]] Result<void> UploadTexture(Texture* texture, const void* data);
 
@@ -153,8 +157,6 @@ namespace RM
         uint32_t m_current_resource = 0;
         std::vector<uint32_t> m_free_resources;
 
-        std::unordered_map<Format, Pipeline*> m_blit_pipelines;
-
         uint32_t m_current_sampler = 0;
         std::vector<uint32_t> m_free_samplers;
 #elifdef RIMERA_WINDOWS
@@ -188,6 +190,9 @@ namespace RM
         [[nodiscard]] Result<DescriptorHeap> CreateDescriptorHeap(
             D3D12_DESCRIPTOR_HEAP_TYPE heap_type,
             uint32_t count) const;
+        [[nodiscard]] DisplayInfo QueryDisplayInfo();
+        [[nodiscard]] Result<void> CreateSwapchainTextures();
+        void SelectSwapchainFormat(bool hdr);
         ComPtr<ID3D12Device15> m_device;
         ComPtr<IDXGIAdapter4> m_adapter;
         ComPtr<IDXGIFactory7> m_factory;
@@ -196,6 +201,8 @@ namespace RM
         DescriptorHeap m_srv_heap;
         DescriptorHeap m_sampler_heap;
         ComPtr<IDXGISwapChain4> m_swapchain;
+        DXGI_FORMAT m_swapchain_format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        Format m_backbuffer_format = Format::BGRA8_UNorm;
         ComPtr<D3D12MA::Allocator> m_allocator;
 
         struct FrameData

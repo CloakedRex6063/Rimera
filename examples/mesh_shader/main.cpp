@@ -44,8 +44,18 @@ struct MeshShaderScene
 
     static_assert(sizeof(SceneData) == 32);
 
+    struct TonemapData
+    {
+        glm::uvec2 size;
+        float headroom;
+        float sdr_white_scale;
+        uint32_t hdr;
+    };
+
+    static_assert(sizeof(TonemapData) == 20);
+
     static constexpr auto kVisibilityFormat = RM::Format::R32_UInt;
-    static constexpr auto kColorFormat = RM::Format::RGBA8_UNorm;
+    static constexpr auto kColorFormat = RM::Format::RGBA16_Float;
     static constexpr auto kDepthFormat = RM::Format::Depth32_Float;
 
     MeshShaderScene(RM::Device* device, Model* model, glm::uvec2 size)
@@ -65,6 +75,7 @@ struct MeshShaderScene
     RM::Buffer* texture_buffer = nullptr;
     RM::Pipeline* pipeline = nullptr;
     RM::Pipeline* visualize_pipeline = nullptr;
+    RM::Pipeline* tonemap_pipeline = nullptr;
     RM::Sampler* sampler = nullptr;
 
     template <class T>
@@ -169,6 +180,14 @@ struct MeshShaderScene
         });
         if (!visualize_result) return std::unexpected(visualize_result.error());
         visualize_pipeline = *visualize_result;
+
+        auto tonemap_shader = FileIO::Read(FileIO::ResourcePath() + "shaders/tonemap.hlsl");
+        if (!tonemap_shader) return std::unexpected(tonemap_shader.error());
+        auto tonemap_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
+            .shader = {.code = *tonemap_shader, .entry_point = "CSMain"},
+        });
+        if (!tonemap_result) return std::unexpected(tonemap_result.error());
+        tonemap_pipeline = *tonemap_result;
         residency->Commit();
         return {};
     }
@@ -193,6 +212,7 @@ struct MeshShaderScene
             }
         if (pipeline) device->DestroyPipeline(pipeline);
         if (visualize_pipeline) device->DestroyPipeline(visualize_pipeline);
+        if (tonemap_pipeline) device->DestroyPipeline(tonemap_pipeline);
         if (sampler) device->DestroySampler(sampler);
         delete model;
     }
@@ -302,6 +322,8 @@ int main()
                                : CameraMode::Orbit);
         
         const glm::mat4 view_projection = camera.GetViewProjection();
+        const RM::DisplayInfo display_info = device->GetDisplayInfo();
+        imgui->SetDisplayInfo(display_info);
 
         auto* queue = device->GetGraphicsQueue();
         if (auto result = device->NewFrame(queue); !result)
@@ -322,6 +344,9 @@ int main()
         auto color = graph->CreateTexture(
             RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kColorFormat).Build(),
             "color");
+        auto display = graph->CreateTexture(
+            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kColorFormat).Build(),
+            "display");
         auto depth = graph->CreateTexture(
             RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kDepthFormat).Build(),
             "depth");
@@ -345,10 +370,25 @@ int main()
              .ResourceIndex(4, color)
              .RootConstants(size, 8)
              .Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
-        
-        imgui->AddPass(graph, color);
 
-        graph->AddCopyPass("Backbuffer Blit").Blit(color, output);
+        graph->AddComputePass("Tonemap")
+             .Read(color)
+             .Write(display)
+             .Pipeline(scene.tonemap_pipeline)
+             .ResourceIndex(0, color)
+             .ResourceIndex(4, display)
+             .RootConstants(MeshShaderScene::TonemapData{
+                                .size = size,
+                                .headroom = display_info.headroom,
+                                .sdr_white_scale = display_info.sdr_white_scale,
+                                .hdr = display_info.hdr ? 1u : 0u,
+                            },
+                            8)
+             .Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
+
+        imgui->AddPass(graph, display);
+
+        graph->AddCopyPass("Backbuffer Blit").Blit(display, output);
 
         if (auto result = graph->Execute(command); !result)
         {

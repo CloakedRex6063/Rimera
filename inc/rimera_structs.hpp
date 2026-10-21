@@ -81,6 +81,13 @@ namespace RM
         uint32_t sampler_descriptor_count = 256;
     };
 
+    struct DisplayInfo
+    {
+        bool hdr = false;
+        float headroom = 1.f;
+        float sdr_white_scale = 1.f;
+    };
+
     enum class QueueType
     {
         Graphics,

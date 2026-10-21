@@ -11,6 +11,7 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     if (!info.window || !info.width || !info.height || !info.resource_descriptor_count ||
         !info.sampler_descriptor_count)
         return std::unexpected("Invalid device creation parameters");
+    m_window = info.window;
     m_device = NS::TransferPtr(MTL::CreateSystemDefaultDevice());
     if (!m_device) return std::unexpected("No Metal device is available");
     m_swap_layer = Metal::CreateSwapLayer(m_device, info);
@@ -43,12 +44,12 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     m_core_residency_set->Commit();
     m_core_residency_set->RequestResidency();
 
-    auto blit_bgra8_result = Helpers::CreateBlitShader(this, Format::BGRA8_UNorm);
-    if (!blit_bgra8_result) return std::unexpected(blit_bgra8_result.error());
-    m_blit_pipelines[Format::BGRA8_UNorm] = std::move(*blit_bgra8_result);
-    auto blit_hdr_result = Helpers::CreateBlitShader(this, Format::BGRA10_XR);
-    if (!blit_hdr_result) return std::unexpected(blit_hdr_result.error());
-    m_blit_pipelines[Format::BGRA10_XR] = std::move(*blit_hdr_result);
+    for (const auto format : {Format::RGBA16_Float, Format::BGRA8_UNorm})
+    {
+        auto blit_result = Helpers::CreateBlitShader(this, format);
+        if (!blit_result) return std::unexpected(blit_result.error());
+        m_blit_pipelines[format] = *blit_result;
+    }
     return {};
 }
 
@@ -127,8 +128,15 @@ RM::Result<void> RM::Device::Resize(uint32_t width, uint32_t height)
     m_swapchain_textures.clear();
     m_drawable = nullptr;
 
+    Metal::ConfigureSwapLayer(m_swap_layer.get(), Metal::SupportsHDR(m_window));
     m_swap_layer->setDrawableSize(CGSizeMake(width, height));
     return {};
+}
+
+RM::DisplayInfo RM::Device::GetDisplayInfo()
+{
+    if (m_swap_layer->pixelFormat() != MTL::PixelFormat::PixelFormatRGBA16Float) return {};
+    return Metal::GetDisplayInfo(m_window);
 }
 
 void* RM::Device::GetNativeHandle() const { return m_device.get(); }

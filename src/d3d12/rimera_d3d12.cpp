@@ -1,3 +1,21 @@
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#ifndef UNICODE
+#define UNICODE
+#endif
+#include "windows.h"
+#include "wrl/client.h"
+using namespace Microsoft::WRL;
+#include "directx/d3d12.h"
+#include "dxgi1_6.h"
+#include "D3D12MemAlloc.h"
+#include "algorithm"
+#include "array"
+#include "cstring"
+#include "cwchar"
+#include "ranges"
+#include "span"
+#include "vector"
 #include "rimera_d3d12.hpp"
 #include "cassert"
 #include "rimera_buffer.hpp"
@@ -31,6 +49,47 @@ void RM::D3D12::EnableDebugLayer()
     debug->SetEnableGPUBasedValidation(TRUE);
 }
 #endif
+
+// https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-displayconfig_sdr_white_level
+float RM::D3D12::GetSdrWhiteLevel(const wchar_t* device_name)
+{
+    constexpr float kDefaultWhite = 80.f;
+    UINT32 path_count = 0;
+    UINT32 mode_count = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) !=
+        ERROR_SUCCESS)
+        return kDefaultWhite;
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count);
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS,
+                           &path_count,
+                           paths.data(),
+                           &mode_count,
+                           modes.data(),
+                           nullptr) != ERROR_SUCCESS)
+        return kDefaultWhite;
+
+    for (UINT32 i = 0; i < path_count; ++i)
+    {
+        const auto& path = paths[i];
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
+        source.header = {.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                         .size = sizeof(source),
+                         .adapterId = path.sourceInfo.adapterId,
+                         .id = path.sourceInfo.id};
+        if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS) continue;
+        if (std::wcscmp(source.viewGdiDeviceName, device_name) != 0) continue;
+
+        DISPLAYCONFIG_SDR_WHITE_LEVEL white{};
+        white.header = {.type = DISPLAYCONFIG_DEVICE_INFO_GET_SDR_WHITE_LEVEL,
+                        .size = sizeof(white),
+                        .adapterId = path.targetInfo.adapterId,
+                        .id = path.targetInfo.id};
+        if (DisplayConfigGetDeviceInfo(&white.header) != ERROR_SUCCESS) return kDefaultWhite;
+        return static_cast<float>(white.SDRWhiteLevel) / 1000.f * kDefaultWhite;
+    }
+    return kDefaultWhite;
+}
 
 D3D12_COMMAND_LIST_TYPE RM::D3D12::GetQueueType(QueueType type)
 {

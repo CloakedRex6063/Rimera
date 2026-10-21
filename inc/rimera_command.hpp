@@ -149,7 +149,6 @@ namespace RM
         std::vector<PendingBarrier> m_pending_barriers;
 
 #elifdef RIMERA_WINDOWS
-        Pipeline* m_blit_shader = nullptr;
         bool m_in_compute_pass = false;
         ComPtr<ID3D12GraphicsCommandList10> m_command_buffer;
         ComPtr<ID3D12CommandAllocator> m_command_allocator;

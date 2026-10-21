@@ -11,7 +11,6 @@ RM::Command::~Command()
     m_command_allocator.Reset();
     m_command_buffer.Reset();
     m_device->DestroyBuffer(m_blit_buffer);
-    m_device->DestroyPipeline(m_blit_shader);
     m_device->DestroySampler(m_sampler);
 }
 
@@ -323,8 +322,8 @@ void RM::Command::SetScissor(const Rect& rect) const
     {
         .left = static_cast<int>(rect.offset.x),
         .top = static_cast<int>(rect.offset.y),
-        .right = static_cast<int>(rect.size.x),
-        .bottom = static_cast<int>(rect.size.y),
+        .right = static_cast<int>(rect.offset.x + rect.size.x),
+        .bottom = static_cast<int>(rect.offset.y + rect.size.y),
     };
     m_command_buffer->RSSetScissorRects(1, &scissor);
 }
@@ -440,6 +439,14 @@ RM::Result<void> RM::Command::Blit(const Texture* source,
     auto src_dim = source->GetDimensions();
     auto dst_dim = dest->GetDimensions();
 
+    auto pipeline = m_device->m_blit_pipelines.find(dest->GetFormat());
+    if (pipeline == m_device->m_blit_pipelines.end())
+    {
+        auto result = Helpers::CreateBlitShader(m_device, dest->GetFormat());
+        if (!result) return std::unexpected(result.error());
+        pipeline = m_device->m_blit_pipelines.emplace(dest->GetFormat(), *result).first;
+    }
+
     uint32_t src_w = std::max(1u, src_dim.x >> region.src_mip);
     uint32_t src_h = std::max(1u, src_dim.y >> region.src_mip);
 
@@ -468,9 +475,10 @@ RM::Result<void> RM::Command::Blit(const Texture* source,
     BeginRenderPass(RenderPassBuilder(dst_dim).Color(dest).Build());
 
 #ifdef RIMERA_DEBUG
-    if (auto result = BindShader(m_blit_shader); !result) return std::unexpected(result.error());
+    if (auto result = BindShader(pipeline->second); !result)
+        return std::unexpected(result.error());
 #else
-    static_cast<void>(BindShader(m_blit_shader));
+    static_cast<void>(BindShader(pipeline->second));
 #endif
 
 #ifdef RIMERA_DEBUG
@@ -519,9 +527,6 @@ RM::Result<void> RM::Command::Initialize(Device* device, QueueType queue_type)
         return std::unexpected("Failed to create command list");
     if (FAILED(m_command_buffer->Close())) return std::unexpected("Failed to close command list");
 
-    auto blit_shader_result = Helpers::CreateBlitShader(device, Format::RGBA8_UNorm);
-    if (!blit_shader_result) return std::unexpected(blit_shader_result.error());
-    m_blit_shader = std::move(*blit_shader_result);
     auto blit_buffer_result = device->CreateBuffer({
         .size = sizeof(BlitPassData),
         .data = nullptr,
