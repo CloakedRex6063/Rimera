@@ -461,8 +461,8 @@ RM::Result<void> RM::Command::Blit(const Texture* source,
     auto* pass_data = m_blit_data;
     *pass_data = {
         .src_index = source->GetResourceIndex(),
-        .sampler_index = m_sampler->GetSamplerIndex(),
         .src_mip = region.src_mip,
+        .sampler_index = m_sampler->GetSamplerIndex(),
         .uv_rect = {
             .x = static_cast<float>(src.offset.x) / static_cast<float>(src_w),
             .y = static_cast<float>(src.offset.y) / static_cast<float>(src_h),

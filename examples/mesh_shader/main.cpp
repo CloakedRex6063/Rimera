@@ -44,6 +44,7 @@ struct MeshShaderScene
 
     static_assert(sizeof(SceneData) == 96);
 
+    static constexpr auto kVisibilityFormat = RM::Format::R32_UInt;
     static constexpr auto kColorFormat = RM::Format::RGBA8_UNorm;
     static constexpr auto kDepthFormat = RM::Format::Depth32_Float;
 
@@ -63,6 +64,7 @@ struct MeshShaderScene
     RM::Buffer* material_buffer = nullptr;
     RM::Buffer* texture_buffer = nullptr;
     RM::Pipeline* pipeline = nullptr;
+    RM::Pipeline* visualize_pipeline = nullptr;
     RM::Sampler* sampler = nullptr;
 
     template <class T>
@@ -151,7 +153,7 @@ struct MeshShaderScene
         RM::MeshGraphicsPipelineCreateInfo pipeline_info{
             .mesh_shader = {.code = *model_shader, .entry_point = "MSMain"},
             .fragment_shader = {.code = *model_shader, .entry_point = "PSMain"},
-            .rtv_formats = {kColorFormat},
+            .rtv_formats = {kVisibilityFormat},
             .dsv_format = kDepthFormat,
             .depth_stencil_state = {
                 .depth_enable = true,
@@ -164,17 +166,48 @@ struct MeshShaderScene
         auto pipeline_result = device->CreatePipeline(pipeline_info);
         if (!pipeline_result) return std::unexpected(pipeline_result.error());
         pipeline = *pipeline_result;
+
+        auto visualize_shader =
+            FileIO::Read(FileIO::ResourcePath() + "shaders/visibility.hlsl");
+        if (!visualize_shader) return std::unexpected(visualize_shader.error());
+        auto visualize_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
+            .shader = {.code = *visualize_shader, .entry_point = "CSMain"},
+        });
+        if (!visualize_result) return std::unexpected(visualize_result.error());
+        visualize_pipeline = *visualize_result;
         residency->Commit();
         return {};
     }
 
-    RM::Result<void> DrawModel(RM::Command* command)
+    RM::Result<void> DrawModel(RM::Command* command) const
     {
         if (auto result = command->BindShader(pipeline); !result) return result;
         if (auto result = command->BindConstantBuffer(0, scene_buffer); !result) return result;
-        command->SetViewport({.size = {size.x, size.y}, .depth_range = {0, 1}});
+        command->SetViewport({.size = {size.x, size.y}, .depth_range = {.x = 0, .y = 1}});
         command->SetScissor({.size = {size.x, size.y}});
         return command->DispatchMesh({.x = meshlet_count, .y = 1, .z = 1});
+    }
+
+    RM::Result<void> Visualize(RM::Command* command,
+                               const RM::Texture* visibility,
+                               const RM::Texture* color) const
+    {
+        struct
+        {
+            uint32_t visibility_index;
+            uint32_t color_index;
+            uint32_t width;
+            uint32_t height;
+        } constants{
+            .visibility_index = visibility->GetResourceIndex(RM::TextureViewType::ShaderRead),
+            .color_index = color->GetResourceIndex(RM::TextureViewType::ShaderReadWrite),
+            .width = size.x,
+            .height = size.y,
+        };
+        if (auto result = command->BindShader(visualize_pipeline); !result) return result;
+        if (auto result = command->BindRootConstants(&constants, sizeof(constants)); !result)
+            return result;
+        return command->Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
     }
 
     void Cleanup()
@@ -196,6 +229,7 @@ struct MeshShaderScene
                 device->DestroyBuffer(buffer);
             }
         if (pipeline) device->DestroyPipeline(pipeline);
+        if (visualize_pipeline) device->DestroyPipeline(visualize_pipeline);
         if (sampler) device->DestroySampler(sampler);
         delete model;
     }
@@ -290,6 +324,9 @@ int main()
         command->Begin();
 
         auto output = graph->ImportTexture(device->GetCurrentBackBuffer(), present, present);
+        auto visibility = graph->CreateTexture(
+            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kVisibilityFormat).Build(),
+            "visibility");
         auto color = graph->CreateTexture(
             RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kColorFormat).Build(),
             "color");
@@ -298,14 +335,24 @@ int main()
             "depth");
 
         graph->AddRenderPass("Scene")
-             .Color(color,
+             .Color(visibility,
                     RM::LoadOp::Clear,
                     RM::StoreOp::Store,
-                    {.r = 0.392157, .g = 0.584314, .b = 0.929412, .a = 1.0})
+                    {.r = 0, .g = 0, .b = 0, .a = 0})
              .Depth(depth, RM::LoadOp::Clear, RM::StoreOp::DontCare)
              .Execute([&](const RM::RenderGraphContext& context)
              {
                  return scene.DrawModel(context.GetCommand());
+             });
+
+        graph->AddComputePass("Visualize")
+             .Read(visibility)
+             .Write(color)
+             .Execute([&](const RM::RenderGraphContext& context)
+             {
+                 return scene.Visualize(context.GetCommand(),
+                                        context.GetTexture(visibility),
+                                        context.GetTexture(color));
              });
 
         graph->AddCopyPass("Backbuffer Blit")

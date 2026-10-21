@@ -77,8 +77,8 @@ namespace RM
         struct BlitPassData
         {
             uint32_t src_index;
-            uint32_t sampler_index;
             uint32_t src_mip;
+            uint32_t sampler_index;
             uint32_t padding;
             Float4 uv_rect;
         };
