@@ -194,26 +194,13 @@ struct MeshShaderScene
 
     void Cleanup()
     {
-        for (auto* mesh : model->GetMeshes())
-        {
-            residency->RemoveAllocation(mesh->GetVertexBuffer());
-            residency->RemoveAllocation(mesh->GetVertexIndexBuffer());
-            residency->RemoveAllocation(mesh->GetTriangleBuffer());
-            residency->RemoveAllocation(mesh->GetMeshletBuffer());
-        }
-        for (auto* image : model->GetTextures())
-            residency->RemoveAllocation(image->GetTexture());
         for (auto* buffer : {draw_buffer, scene_buffer, transform_buffer, material_buffer,
                              texture_buffer})
-            if (buffer)
-            {
-                residency->RemoveAllocation(buffer);
-                device->DestroyBuffer(buffer);
-            }
-        if (pipeline) device->DestroyPipeline(pipeline);
-        if (visualize_pipeline) device->DestroyPipeline(visualize_pipeline);
-        if (tonemap_pipeline) device->DestroyPipeline(tonemap_pipeline);
-        if (sampler) device->DestroySampler(sampler);
+            device->DestroyImmediate(buffer);
+        if (pipeline) device->DestroyImmediate(pipeline);
+        if (visualize_pipeline) device->DestroyImmediate(visualize_pipeline);
+        if (tonemap_pipeline) device->DestroyImmediate(tonemap_pipeline);
+        if (sampler) device->DestroyImmediate(sampler);
         delete model;
     }
 };
@@ -254,7 +241,7 @@ int main()
     if (!result_swapchain)
     {
         std::cerr << result_swapchain.error() << '\n';
-        device->DestroyQueue(queue);
+        device->DestroyImmediate(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -264,8 +251,8 @@ int main()
     if (!result_command_ring)
     {
         std::cerr << result_command_ring.error() << '\n';
-        device->DestroySwapchain(swapchain);
-        device->DestroyQueue(queue);
+        device->DestroyImmediate(swapchain);
+        device->DestroyImmediate(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -276,9 +263,9 @@ int main()
     if (!result_graph)
     {
         std::cerr << result_graph.error() << '\n';
-        device->DestroyCommandRing(command_ring);
-        device->DestroySwapchain(swapchain);
-        device->DestroyQueue(queue);
+        device->DestroyImmediate(command_ring);
+        device->DestroyImmediate(swapchain);
+        device->DestroyImmediate(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -289,10 +276,10 @@ int main()
     if (!result_model)
     {
         std::cerr << result_model.error() << '\n';
-        device->DestroyRenderGraph(graph);
-        device->DestroyCommandRing(command_ring);
-        device->DestroySwapchain(swapchain);
-        device->DestroyQueue(queue);
+        device->DestroyImmediate(graph);
+        device->DestroyImmediate(command_ring);
+        device->DestroyImmediate(swapchain);
+        device->DestroyImmediate(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -304,10 +291,10 @@ int main()
     {
         std::cerr << result.error() << '\n';
         scene.Cleanup();
-        device->DestroyRenderGraph(graph);
-        device->DestroyCommandRing(command_ring);
-        device->DestroySwapchain(swapchain);
-        device->DestroyQueue(queue);
+        device->DestroyImmediate(graph);
+        device->DestroyImmediate(command_ring);
+        device->DestroyImmediate(swapchain);
+        device->DestroyImmediate(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -464,12 +451,12 @@ int main()
         std::cerr << result.error() << '\n';
         exit_code = 1;
     }
-    device->DestroyRenderGraph(graph);
+    device->DestroyImmediate(graph);
     ImGuiLayer::Destroy(imgui);
     scene.Cleanup();
-    device->DestroyCommandRing(command_ring);
-    device->DestroySwapchain(swapchain);
-    device->DestroyQueue(queue);
+    device->DestroyImmediate(command_ring);
+    device->DestroyImmediate(swapchain);
+    device->DestroyImmediate(queue);
     RM::DestroyDevice(device);
     delete window;
     return exit_code;

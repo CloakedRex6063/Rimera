@@ -12,6 +12,11 @@ void* RM::Fence::GetNativeHandle() const
     return m_fence.Get();
 }
 
+uint64_t RM::Fence::GetCompletedValue() const
+{
+    return m_fence->GetCompletedValue();
+}
+
 RM::Result<void> RM::Fence::Wait(uint64_t value) const
 {
     if (value > m_fence->GetCompletedValue())
@@ -33,34 +38,30 @@ RM::Result<void> RM::Fence::Initialize(Device* device)
 
 RM::Queue::~Queue()
 {
+    if (m_fence) m_device->DestroyImmediate(m_fence);
     m_queue.Reset();
 }
 
-void RM::Queue::AddResidencySet(const ResidencySet*) const
+void RM::Queue::AddResidencySet([[maybe_unused]] ResidencySet* residency_set) const
 {
+#ifdef RIMERA_DEBUG
+    residency_set->TrackQueue(this);
+#endif
 }
 
-void RM::Queue::RemoveResidencySet(const ResidencySet*) const
+void RM::Queue::RemoveResidencySet([[maybe_unused]] ResidencySet* residency_set) const
 {
+#ifdef RIMERA_DEBUG
+    residency_set->UntrackQueue(this);
+#endif
 }
 
-RM::Result<void> RM::Queue::WaitIdle()
-{
-    auto result_fence = m_device->CreateFence();
-    if (!result_fence) return std::unexpected(result_fence.error());
-    auto* fence = std::move(*result_fence);
-    auto val = ++m_value;
-    auto signal = Signal(fence, val);
-    auto waited = signal ? fence->Wait(val) : std::move(signal);
-    m_device->DestroyFence(fence);
-    return waited;
-}
-
-RM::Result<void> RM::Queue::Signal(const Fence* fence, uint64_t value) const
+RM::Result<void> RM::Queue::Signal(Fence* fence, uint64_t value) const
 {
     auto* native_fence = static_cast<ID3D12Fence*>(fence->GetNativeHandle());
     if (FAILED(m_queue->Signal(native_fence, value)))
         return std::unexpected("Failed to signal fence");
+    fence->m_value = std::max(fence->m_value, value);
     return {};
 }
 
@@ -68,6 +69,7 @@ void RM::Queue::Submit(const Command* command) const
 {
     auto* native_command = static_cast<ID3D12CommandList*>(command->GetNativeCommand());
     m_queue->ExecuteCommandLists(1, &native_command);
+    static_cast<void>(Signal(m_fence));
 }
 
 void* RM::Queue::GetNativeHandle() const
@@ -87,5 +89,8 @@ RM::Result<void> RM::Queue::Initialize(Device* device, QueueType type)
     auto* native_device = static_cast<ID3D12Device*>(m_device->GetNativeHandle());
     if (FAILED(native_device->CreateCommandQueue(&desc, IID_PPV_ARGS(&m_queue))))
         return std::unexpected("Failed to create command queue");
+    auto fence = m_device->CreateFence();
+    if (!fence) return std::unexpected(fence.error());
+    m_fence = *fence;
     return {};
 }

@@ -1,9 +1,6 @@
 #include "rimera_residency.hpp"
 
-#include "rimera_buffer.hpp"
 #include "rimera_device.hpp"
-#include "rimera_heap.hpp"
-#include "rimera_texture.hpp"
 
 namespace RM
 {
@@ -18,44 +15,21 @@ namespace RM
         return {};
     }
 
-    ResidencySet::~ResidencySet()
+    ResidencySet::~ResidencySet() { RemoveAllAllocations(); }
+
+    void ResidencySet::AddNativeAllocation(void* native)
+    {
+        m_residency_set->addAllocation(static_cast<MTL::Allocation*>(native));
+    }
+
+    void ResidencySet::RemoveNativeAllocation(void* native)
+    {
+        m_residency_set->removeAllocation(static_cast<MTL::Allocation*>(native));
+    }
+
+    void ResidencySet::RemoveAllNativeAllocations()
     {
         if (m_residency_set) m_residency_set->removeAllAllocations();
-    }
-
-    void ResidencySet::AddAllocation(Texture* resource)
-    {
-        m_residency_set->addAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
-    }
-
-    void ResidencySet::RemoveAllocation(const Texture* resource)
-    {
-        m_residency_set->removeAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
-    }
-
-    void ResidencySet::AddAllocation(Buffer* resource)
-    {
-        m_residency_set->addAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
-    }
-
-    void ResidencySet::RemoveAllocation(const Buffer* resource)
-    {
-        m_residency_set->removeAllocation(static_cast<MTL::Resource*>(resource->GetNativeHandle()));
-    }
-
-    void ResidencySet::AddAllocation(Heap* heap)
-    {
-        m_residency_set->addAllocation(static_cast<MTL::Heap*>(heap->GetNativeHandle()));
-    }
-
-    void ResidencySet::RemoveAllocation(const Heap* heap)
-    {
-        m_residency_set->removeAllocation(static_cast<MTL::Heap*>(heap->GetNativeHandle()));
-    }
-
-    void ResidencySet::RemoveAllAllocations()
-    {
-        m_residency_set->removeAllAllocations();
     }
 
     void ResidencySet::AddAllocation(const MTL::Allocation* allocation) const

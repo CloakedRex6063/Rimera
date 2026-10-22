@@ -1,44 +1,23 @@
 #include "rimera_residency.hpp"
-#include "rimera_texture.hpp"
-#include "rimera_buffer.hpp"
 #include "rimera_device.hpp"
-#include "rimera_heap.hpp"
 
 RM::ResidencySet::~ResidencySet()
 {
+    RemoveAllAllocations();
 }
 
-void RM::ResidencySet::AddAllocation(Texture* resource)
+void RM::ResidencySet::AddNativeAllocation(void* native)
 {
-    m_resources.push_back(static_cast<ID3D12Resource*>(resource->GetNativeHandle()));
+    m_resources.push_back(static_cast<ID3D12Pageable*>(native));
 }
 
-void RM::ResidencySet::RemoveAllocation(const Texture* resource)
+void RM::ResidencySet::RemoveNativeAllocation(void* native)
 {
-    std::erase(m_resources, static_cast<ID3D12Resource*>(resource->GetNativeHandle()));
+    const auto it = std::ranges::find(m_resources, static_cast<ID3D12Pageable*>(native));
+    if (it != m_resources.end()) m_resources.erase(it);
 }
 
-void RM::ResidencySet::AddAllocation(Buffer* resource)
-{
-    m_resources.push_back(static_cast<ID3D12Resource*>(resource->GetNativeHandle()));
-}
-
-void RM::ResidencySet::RemoveAllocation(const Buffer* resource)
-{
-    std::erase(m_resources, static_cast<ID3D12Resource*>(resource->GetNativeHandle()));
-}
-
-void RM::ResidencySet::AddAllocation(Heap* heap)
-{
-    m_resources.push_back(static_cast<ID3D12Heap*>(heap->GetNativeHandle()));
-}
-
-void RM::ResidencySet::RemoveAllocation(const Heap* heap)
-{
-    std::erase(m_resources, static_cast<ID3D12Heap*>(heap->GetNativeHandle()));
-}
-
-void RM::ResidencySet::RemoveAllAllocations()
+void RM::ResidencySet::RemoveAllNativeAllocations()
 {
     m_resources.clear();
 }

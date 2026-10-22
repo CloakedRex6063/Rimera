@@ -97,6 +97,7 @@ RM::Result<void> RM::Texture::Initialize(Device* device, const TextureViewCreate
 
 RM::Texture::~Texture()
 {
+    ReleaseResidency();
     if (m_device && m_resource_index != UINT32_MAX) m_device->RemoveDescriptor(this);
     if (m_heap && m_heap_allocated) m_heap->Free(m_heap_offset);
 }

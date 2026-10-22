@@ -9,12 +9,7 @@ RM::Heap::~Heap()
         std::fprintf(stderr, "[Rimera] Heap destroyed with %zu live allocations\n",
                      m_allocations.size());
 #endif
-    if (m_heap && m_device)
-    {
-        auto* residency_set = m_device->GetCoreResidencySet();
-        residency_set->RemoveAllocation(this);
-        residency_set->Commit();
-    }
+    ReleaseResidency();
     m_heap.reset();
 }
 

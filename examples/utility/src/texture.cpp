@@ -86,5 +86,5 @@ RM::Result<void> Texture::Upload(RM::Device* device,
 
 Texture::~Texture()
 {
-    if (m_texture) m_device->DestroyTexture(m_texture);
+    if (m_texture) m_device->DestroyImmediate(m_texture);
 }

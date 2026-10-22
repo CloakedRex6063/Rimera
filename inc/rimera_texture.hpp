@@ -1,12 +1,13 @@
 #pragma once
 #include "rimera_structs.hpp"
+#include "rimera_residency.hpp"
 
 namespace RM
 {
     class Device;
     class Heap;
 
-    class Texture
+    class Texture : public Resident
     {
     public:
         ~Texture();
@@ -66,7 +67,6 @@ namespace RM
 
         friend class Device;
         friend class Heap;
-        Device* m_device = nullptr;
         Heap* m_heap = nullptr;
         uint64_t m_heap_offset = 0;
         bool m_heap_allocated = false;

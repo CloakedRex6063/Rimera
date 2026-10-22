@@ -9,6 +9,7 @@ RM::Heap::~Heap()
         std::fprintf(stderr, "[Rimera] Heap destroyed with %zu live allocations\n",
                      m_allocations.size());
 #endif
+    ReleaseResidency();
     m_heap.Reset();
 }
 
@@ -50,5 +51,6 @@ RM::Result<void> RM::Heap::Initialize(Device* device, const HeapCreateInfo& info
     };
     if (FAILED(native_device->CreateHeap(&desc, IID_PPV_ARGS(&m_heap))))
         return std::unexpected("Failed to create heap");
+    m_device->GetCoreResidencySet()->AddAllocation(this);
     return {};
 }

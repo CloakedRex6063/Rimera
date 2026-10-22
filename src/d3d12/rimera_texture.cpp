@@ -5,6 +5,7 @@
 
 RM::Texture::~Texture()
 {
+    ReleaseResidency();
     if (m_device) m_device->RemoveDescriptor(this);
     if (m_heap && m_heap_allocated) m_heap->Free(m_heap_offset);
 }

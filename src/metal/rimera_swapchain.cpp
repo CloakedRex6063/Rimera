@@ -27,7 +27,7 @@ RM::Swapchain::~Swapchain()
 
 void RM::Swapchain::DestroyTextures()
 {
-    for (auto [id, texture] : m_textures) m_device->DestroyTexture(texture);
+    for (auto [id, texture] : m_textures) m_device->DestroyImmediate(texture);
     m_textures.clear();
     m_drawable = nullptr;
 }

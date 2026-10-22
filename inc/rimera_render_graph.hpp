@@ -372,14 +372,6 @@ namespace RM
             bool in_use = false;
         };
 
-        struct RetiredHeap
-        {
-            Heap* heap = nullptr;
-            std::vector<Texture*> textures;
-            std::vector<Buffer*> buffers;
-            uint64_t last_used = 0;
-        };
-
         [[nodiscard]] Result<void> Initialize(Device* device, const RenderGraphCreateInfo& info);
         [[nodiscard]] uint32_t AddPass(std::string_view name, GraphPassType type);
         void AddUsage(uint32_t pass, uint32_t resource, ResourceType type, ResourceUsage usage);
@@ -416,7 +408,6 @@ namespace RM
         Heap* m_heap = nullptr;
         std::vector<CachedTexture> m_texture_cache;
         std::vector<CachedBuffer> m_buffer_cache;
-        std::vector<RetiredHeap> m_retired_heaps;
         std::unordered_map<const void*, ResourceState> m_external_states;
         RenderGraphStatistics m_statistics{};
         RenderGraphTimeline m_timeline{};

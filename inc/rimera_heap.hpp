@@ -1,6 +1,7 @@
 #pragma once
 #include "unordered_map"
 #include "rimera_structs.hpp"
+#include "rimera_residency.hpp"
 
 namespace RM
 {
@@ -8,7 +9,7 @@ namespace RM
     class Buffer;
     class Texture;
 
-    class Heap
+    class Heap : public Resident
     {
     public:
         Heap(const Heap&) = delete;
@@ -51,7 +52,6 @@ namespace RM
         [[nodiscard]] Result<uint64_t> Allocate(const ResourceAllocationInfo& allocation);
         void Free(uint64_t offset);
 
-        Device* m_device = nullptr;
         uint64_t m_size = 0;
         uint64_t m_used = 0;
         HeapMemory m_memory = HeapMemory::DeviceLocal;

@@ -133,7 +133,6 @@ namespace RM
         mutable Buffer* m_arg_buffer = nullptr;
         mutable uint8_t* m_arg_data = nullptr;
         mutable uint32_t m_arg_offset = 0;
-        mutable std::vector<Buffer*> m_retired_arg_buffers;
 
         DispatchGroup m_threads_per_mesh{};
         DispatchGroup m_threads_per_ampl{};

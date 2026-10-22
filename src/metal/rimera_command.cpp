@@ -63,32 +63,14 @@ RM::Command::~Command()
 {
     m_command_buffer.reset();
     m_command_allocator.reset();
-    if (m_blit_buffer)
-    {
-        m_device->GetCoreResidencySet()->RemoveAllocation(m_blit_buffer);
-        m_device->DestroyBuffer(m_blit_buffer);
-    }
-    if (m_sampler) m_device->DestroySampler(m_sampler);
-    m_retired_arg_buffers.push_back(m_arg_buffer);
-    for (auto* buffer : m_retired_arg_buffers)
-    {
-        if (!buffer) continue;
-        m_device->GetCoreResidencySet()->RemoveAllocation(buffer);
-        m_device->DestroyBuffer(buffer);
-    }
-    m_device->GetCoreResidencySet()->Commit();
+    m_device->DestroyImmediate(m_blit_buffer);
+    m_device->DestroyImmediate(m_sampler);
+    m_device->DestroyImmediate(m_arg_buffer);
 }
 
 void RM::Command::Begin()
 {
     m_index_buffer = {};
-    for (auto* buffer : m_retired_arg_buffers)
-    {
-        m_device->GetCoreResidencySet()->RemoveAllocation(buffer);
-        m_device->DestroyBuffer(buffer);
-    }
-    if (!m_retired_arg_buffers.empty()) m_device->GetCoreResidencySet()->Commit();
-    m_retired_arg_buffers.clear();
     m_arguments.fill(0);
     m_root_constants.fill(0);
     m_root_constants_size = 0;
@@ -598,10 +580,10 @@ RM::Result<void> RM::Command::CreateArgumentBuffer(uint32_t size) const
     auto mapped = (*buffer)->Map();
     if (!mapped)
     {
-        m_device->DestroyBuffer(*buffer);
+        m_device->DestroyImmediate(*buffer);
         return std::unexpected(mapped.error());
     }
-    if (m_arg_buffer) m_retired_arg_buffers.push_back(m_arg_buffer);
+    m_device->Retire(m_arg_buffer);
     m_arg_buffer = *buffer;
     m_arg_data = static_cast<uint8_t*>(*mapped);
     m_arg_offset = 0;

@@ -47,15 +47,13 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 
 RM::Device::~Device()
 {
-    if (m_frame_fence)
-    {
-        static_cast<void>(m_frame_fence->Wait(m_frame_value));
-        DestroyFence(m_frame_fence);
-    }
-    if (m_upload_command) DestroyCommand(m_upload_command);
-    if (m_upload_fence) DestroyFence(m_upload_fence);
-    if (m_upload_queue) DestroyQueue(m_upload_queue);
-    for (auto [format, pipeline] : m_blit_pipelines) delete pipeline;
+    if (m_frame_fence) static_cast<void>(m_frame_fence->Wait());
+    FlushRetired(nullptr);
+    if (m_upload_command) DestroyImmediate(m_upload_command);
+    if (m_upload_queue) DestroyImmediate(m_upload_queue);
+    if (m_upload_fence) DestroyImmediate(m_upload_fence);
+    if (m_frame_fence) DestroyImmediate(m_frame_fence);
+    for (auto [format, pipeline] : m_blit_pipelines) DestroyImmediate(pipeline);
     if (m_core_residency_set)
     {
         m_core_residency_set->RemoveAllAllocations();
@@ -65,22 +63,15 @@ RM::Device::~Device()
     if (m_root_sig) IRRootSignatureDestroy(m_root_sig);
 }
 
-RM::Result<RM::Queue*> RM::Device::CreateQueue(const QueueType type)
-{
-    auto result = CreateObject<Queue>(this, type);
-    if (!result) return std::unexpected(result.error());
-    auto* queue = *result;
-    queue->AddResidencySet(m_core_residency_set);
-    return queue;
-}
-
 RM::Result<void> RM::Device::NewFrame(Queue* queue)
 {
-    if (auto result = queue->Signal(m_frame_fence, ++m_frame_value); !result) return result;
-    m_frame_values[m_current_frame] = m_frame_value;
+    auto value = queue->Signal(m_frame_fence);
+    if (!value) return std::unexpected(value.error());
+    m_frame_values[m_current_frame] = *value;
     m_current_frame = (m_current_frame + 1) % m_frame_values.size();
     if (auto result = m_frame_fence->Wait(m_frame_values[m_current_frame]); !result)
         return result;
+    ReleaseRetired();
 
     m_frame_pool.reset();
     m_frame_pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());

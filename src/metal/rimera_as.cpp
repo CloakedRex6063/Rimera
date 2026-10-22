@@ -46,15 +46,15 @@ RM::Result<void> RM::BLAS::Initialize(Device* device, const BLASCreateInfo& info
     auto result_queue = device->CreateQueue(QueueType::Compute);
     if (!result_queue)
     {
-        device->DestroyCommand(command);
+        device->DestroyImmediate(command);
         return std::unexpected(result_queue.error());
     }
     auto* queue = std::move(*result_queue);
     queue->Submit(command);
     auto idle = queue->WaitIdle();
 
-    device->DestroyQueue(queue);
-    device->DestroyCommand(command);
+    device->DestroyImmediate(queue);
+    device->DestroyImmediate(command);
     if (!idle) return std::unexpected(idle.error());
     return {};
 }
@@ -121,14 +121,14 @@ RM::Result<void> RM::TLAS::Initialize(Device* device, const TLASCreateInfo& info
     auto result_queue = device->CreateQueue(QueueType::Compute);
     if (!result_queue)
     {
-        device->DestroyCommand(command);
+        device->DestroyImmediate(command);
         return std::unexpected(result_queue.error());
     }
     auto* queue = std::move(*result_queue);
     queue->Submit(command);
     auto idle = queue->WaitIdle();
-    device->DestroyCommand(command);
-    device->DestroyQueue(queue);
+    device->DestroyImmediate(command);
+    device->DestroyImmediate(queue);
     if (!idle) return std::unexpected(idle.error());
     return {};
 }

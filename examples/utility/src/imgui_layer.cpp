@@ -158,14 +158,9 @@ void ImGuiLayer::Destroy(const ImGuiLayer* layer)
 ImGuiLayer::~ImGuiLayer()
 {
     for (auto& frame : m_frames) DestroyFrame(frame);
-    if (m_font_texture)
-    {
-        m_device->GetCoreResidencySet()->RemoveAllocation(m_font_texture);
-        m_device->DestroyTexture(m_font_texture);
-    }
-    if (m_device) m_device->GetCoreResidencySet()->Commit();
-    if (m_sampler) m_device->DestroySampler(m_sampler);
-    if (m_pipeline) m_device->DestroyPipeline(m_pipeline);
+    if (m_font_texture) m_device->DestroyImmediate(m_font_texture);
+    if (m_sampler) m_device->DestroyImmediate(m_sampler);
+    if (m_pipeline) m_device->DestroyImmediate(m_pipeline);
     if (m_plot_context) ImPlot::DestroyContext(m_plot_context);
     if (m_context) ImGui::DestroyContext(m_context);
 }
@@ -468,8 +463,7 @@ RM::Result<bool> ImGuiLayer::Grow(RM::Buffer*& buffer,
     const uint32_t new_capacity = std::max({count + count / 2, capacity * 2, 1024u});
     if (buffer)
     {
-        residency->RemoveAllocation(buffer);
-        m_device->DestroyBuffer(buffer);
+        m_device->Retire(buffer);
         buffer = nullptr;
         data = nullptr;
         capacity = 0;
@@ -491,13 +485,8 @@ RM::Result<bool> ImGuiLayer::Grow(RM::Buffer*& buffer,
 
 void ImGuiLayer::DestroyFrame(FrameBuffers& frame) const
 {
-    auto* residency = m_device ? m_device->GetCoreResidencySet() : nullptr;
     for (auto* buffer : {frame.vertices, frame.indices})
-    {
-        if (!buffer) continue;
-        residency->RemoveAllocation(buffer);
-        m_device->DestroyBuffer(buffer);
-    }
+        if (buffer) m_device->DestroyImmediate(buffer);
     frame = {};
 }
 

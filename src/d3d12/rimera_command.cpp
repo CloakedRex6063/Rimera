@@ -10,8 +10,8 @@ RM::Command::~Command()
 {
     m_command_allocator.Reset();
     m_command_buffer.Reset();
-    m_device->DestroyBuffer(m_blit_buffer);
-    m_device->DestroySampler(m_sampler);
+    m_device->DestroyImmediate(m_blit_buffer);
+    m_device->DestroyImmediate(m_sampler);
 }
 
 void RM::Command::Begin()

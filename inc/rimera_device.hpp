@@ -29,42 +29,42 @@ namespace RM
         ~Device();
 
         [[nodiscard]] Result<Fence*> CreateFence();
-        void DestroyFence(const Fence* fence);
+        void DestroyImmediate(const Fence* fence);
 
         [[nodiscard]] Result<Queue*> CreateQueue(QueueType type);
-        void DestroyQueue(const Queue* queue);
+        void DestroyImmediate(const Queue* queue);
 
         [[nodiscard]] Result<Swapchain*> CreateSwapchain(Queue* queue,
                                                          const SwapchainCreateInfo& info);
-        void DestroySwapchain(const Swapchain* swapchain) const;
+        void DestroyImmediate(const Swapchain* swapchain) const;
 
         [[nodiscard]] Result<Command*> CreateCommand(CommandType type);
-        void DestroyCommand(const Command* command) const;
+        void DestroyImmediate(const Command* command) const;
 
         [[nodiscard]] Result<CommandRing*> CreateCommandRing(QueueType type);
-        void DestroyCommandRing(const CommandRing* command_ring) const;
+        void DestroyImmediate(const CommandRing* command_ring) const;
 
         [[nodiscard]] Result<ResidencySet*> CreateResidencySet();
-        void DestroyResidencySet(const ResidencySet* residency_set) const;
+        void DestroyImmediate(const ResidencySet* residency_set) const;
 
         [[nodiscard]] Result<Pipeline*> CreatePipeline(const ComputePipelineCreateInfo& info);
         [[nodiscard]] Result<Pipeline*> CreatePipeline(const GraphicsPipelineCreateInfo& info);
         [[nodiscard]] Result<Pipeline*> CreatePipeline(const MeshGraphicsPipelineCreateInfo& info);
-        void DestroyPipeline(const Pipeline* pipeline);
+        void DestroyImmediate(const Pipeline* pipeline) const;
 
         [[nodiscard]] Result<Texture*> CreateTexture(const TextureCreateInfo& info);
-        void DestroyTexture(const Texture* texture) const;
+        void DestroyImmediate(const Texture* texture) const;
 
         [[nodiscard]] Result<Texture*> CreateTextureView(const TextureViewCreateInfo& info);
 
         [[nodiscard]] Result<Buffer*> CreateBuffer(const BufferCreateInfo& info);
-        void DestroyBuffer(const Buffer* buffer);
+        void DestroyImmediate(const Buffer* buffer) const;
 
         [[nodiscard]] Result<Sampler*> CreateSampler(const SamplerCreateInfo& info);
-        void DestroySampler(const Sampler* sampler);
+        void DestroyImmediate(const Sampler* sampler) const;
 
         [[nodiscard]] Result<Heap*> CreateHeap(const HeapCreateInfo& info);
-        void DestroyHeap(const Heap* heap) const;
+        void DestroyImmediate(const Heap* heap) const;
 
         [[nodiscard]] Result<ResourceAllocationInfo> GetAllocationInfo(
             const TextureCreateInfo& info,
@@ -78,7 +78,7 @@ namespace RM
 
         [[nodiscard]] Result<RenderGraph*> CreateRenderGraph(
             const RenderGraphCreateInfo& info = {});
-        void DestroyRenderGraph(const RenderGraph* render_graph) const;
+        void DestroyImmediate(const RenderGraph* render_graph) const;
 
         [[nodiscard]] void* GetNativeRootSignature() const;
 
@@ -87,7 +87,33 @@ namespace RM
             return m_core_residency_set;
         }
 
+        template <typename T>
+        void Retire(const T* object)
+        {
+            Retire(object, m_frame_fence);
+        }
+
+        template <typename T>
+        void Retire(const T* object, const Fence* fence)
+        {
+            Retire(object, fence, fence->GetSignaledValue() + 1);
+        }
+
+        template <typename T>
+        void Retire(const T* object, const Fence* fence, uint64_t value)
+        {
+            if (!object) return;
+            m_retired.push_back({.object = object,
+                                 .fence = fence,
+                                 .value = value,
+                                 .destroy = [](const void* retired)
+                                 {
+                                     delete static_cast<const T*>(retired);
+                                 }});
+        }
+
         [[nodiscard]] Result<void> NewFrame(Queue* queue);
+        [[nodiscard]] const Fence* GetFrameFence() const noexcept { return m_frame_fence; }
 
         [[nodiscard]] void* GetNativeHandle() const;
 
@@ -109,11 +135,30 @@ namespace RM
             }
             return object;
         }
+        struct RetiredObject
+        {
+            const void* object = nullptr;
+            const Fence* fence = nullptr;
+            uint64_t value = 0;
+            void (*destroy)(const void* object) = nullptr;
+        };
+
+        void ReleaseRetired();
+        void FlushRetired(const Fence* fence);
+
         ResidencySet* m_core_residency_set = nullptr;
+        std::vector<RetiredObject> m_retired;
+        Fence* m_frame_fence = nullptr;
+        std::array<uint64_t, 3> m_frame_values{};
+        uint32_t m_current_frame = 0;
+        uint64_t m_queue_id = 0;
+#ifdef RIMERA_DEBUG
+        [[nodiscard]] const Queue* FindQueue(uint64_t id) const;
+        std::unordered_map<uint64_t, const Queue*> m_queues;
+#endif
         Queue* m_upload_queue = nullptr;
         Command* m_upload_command = nullptr;
         Fence* m_upload_fence = nullptr;
-        uint64_t m_upload_value = 0;
         std::unordered_map<Format, Pipeline*> m_blit_pipelines;
 
         [[nodiscard]] Result<void> UploadTexture(Texture* texture, const void* data);
@@ -132,6 +177,8 @@ namespace RM
         friend class Sampler;
         friend class Heap;
         friend class Swapchain;
+        friend class Resident;
+        friend class ResidencySet;
 
 #ifdef RIMERA_MAC
         [[nodiscard]] Result<uint32_t> AddDescriptor(const Texture* texture);
@@ -141,10 +188,6 @@ namespace RM
         NS::SharedPtr<MTL::Buffer> m_sampler_descriptor_heap;
         NS::SharedPtr<MTL::Buffer> m_constant_arena;
         IRRootSignature* m_root_sig = nullptr;
-        Fence* m_frame_fence = nullptr;
-        std::array<uint64_t, 3> m_frame_values{};
-        uint64_t m_frame_value = 0;
-        uint32_t m_current_frame = 0;
         uint32_t m_current_resource = 0;
         std::vector<uint32_t> m_free_resources;
 
@@ -190,14 +233,6 @@ namespace RM
         DescriptorHeap m_sampler_heap;
         ComPtr<D3D12MA::Allocator> m_allocator;
 
-        struct FrameData
-        {
-            Fence* fence = nullptr;
-            uint64_t fence_value = 0;
-        };
-
-        std::array<FrameData, 3> m_frame_datas{};
-        uint32_t m_current_frame = 0;
         ComPtr<ID3D12RootSignature> m_root_sig;
         ComPtr<ID3D12InfoQueue1> m_info_queue;
         DWORD m_callback_cookie = 0;

@@ -87,13 +87,9 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     auto core_residency_set_result = CreateResidencySet();
     if (!core_residency_set_result) return std::unexpected(core_residency_set_result.error());
     m_core_residency_set = std::move(*core_residency_set_result);
-    for (int i = 0; i < 3; i++)
-    {
-        m_frame_datas[i].fence_value = 0;
-        auto fence_result = CreateFence();
-        if (!fence_result) return std::unexpected(fence_result.error());
-        m_frame_datas[i].fence = std::move(*fence_result);
-    }
+    auto frame_fence_result = CreateFence();
+    if (!frame_fence_result) return std::unexpected(frame_fence_result.error());
+    m_frame_fence = *frame_fence_result;
 
     if (auto result = CreateRootSignature(); !result) return std::unexpected(result.error());
 
@@ -108,25 +104,20 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 
 RM::Device::~Device()
 {
-    for (const auto& frame : m_frame_datas)
-        if (frame.fence) static_cast<void>(frame.fence->Wait(frame.fence_value));
-    if (m_upload_command) DestroyCommand(m_upload_command);
-    if (m_upload_fence) DestroyFence(m_upload_fence);
-    if (m_upload_queue) DestroyQueue(m_upload_queue);
-    for (auto [format, pipeline] : m_blit_pipelines) DestroyPipeline(pipeline);
+    if (m_frame_fence) static_cast<void>(m_frame_fence->Wait());
+    FlushRetired(nullptr);
+    if (m_upload_command) DestroyImmediate(m_upload_command);
+    if (m_upload_queue) DestroyImmediate(m_upload_queue);
+    if (m_upload_fence) DestroyImmediate(m_upload_fence);
+    if (m_frame_fence) DestroyImmediate(m_frame_fence);
+    for (auto [format, pipeline] : m_blit_pipelines) DestroyImmediate(pipeline);
     if (m_core_residency_set) m_core_residency_set->RemoveAllAllocations();
-    for (const auto& frame : m_frame_datas) DestroyFence(frame.fence);
-    DestroyResidencySet(m_core_residency_set);
+    DestroyImmediate(m_core_residency_set);
 
     if (m_callback_registered)
     {
         m_info_queue->UnregisterMessageCallback(m_callback_cookie);
     }
-}
-
-RM::Result<RM::Queue*> RM::Device::CreateQueue(QueueType type)
-{
-    return CreateObject<Queue>(this, type);
 }
 
 RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
@@ -308,12 +299,14 @@ void* RM::Device::GetNativeRootSignature() const
 
 RM::Result<void> RM::Device::NewFrame(Queue* queue)
 {
-    auto& previous = m_frame_datas[m_current_frame];
-    if (auto result = queue->Signal(previous.fence, ++previous.fence_value); !result)
+    auto value = queue->Signal(m_frame_fence);
+    if (!value) return std::unexpected(value.error());
+    m_frame_values[m_current_frame] = *value;
+    m_current_frame = (m_current_frame + 1) % m_frame_values.size();
+    if (auto result = m_frame_fence->Wait(m_frame_values[m_current_frame]); !result)
         return result;
-    m_current_frame = (m_current_frame + 1) % m_frame_datas.size();
-    const auto& frame = m_frame_datas[m_current_frame];
-    return frame.fence->Wait(frame.fence_value);
+    ReleaseRetired();
+    return {};
 }
 
 void* RM::Device::GetNativeHandle() const

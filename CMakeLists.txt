@@ -30,14 +30,16 @@ add_library(Rimera STATIC
         inc/rimera_structs.hpp
         inc/rimera_texture.hpp
         src/rimera_helpers.cpp
-        src/rimera_texture.cpp
+        src/rimera_texture_common.cpp
         inc/rimera_builders.hpp
         inc/rimera_sampler.hpp
         inc/rimera_heap.hpp
         inc/rimera_render_graph.hpp
-        src/rimera_heap.cpp
+        src/rimera_heap_common.cpp
         src/rimera_render_graph.cpp
         src/rimera_device_common.cpp
+        src/rimera_queue_common.cpp
+        src/rimera_residency_common.cpp
 )
 rimera_disable_exceptions(Rimera)
 target_compile_definitions(Rimera PUBLIC

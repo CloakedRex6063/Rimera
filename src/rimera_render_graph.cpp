@@ -614,24 +614,7 @@ RM::Result<void> RM::RenderGraph::EnsureHeap(uint64_t size)
 {
     if (m_heap && m_heap->GetSize() >= size) return {};
 
-    if (m_heap)
-    {
-        RetiredHeap retired{.heap = m_heap, .last_used = m_frame - 1};
-        for (const auto& cached : m_texture_cache)
-        {
-            retired.textures.push_back(cached.texture);
-            retired.last_used = std::max(retired.last_used, cached.last_used);
-        }
-        for (const auto& cached : m_buffer_cache)
-        {
-            retired.buffers.push_back(cached.buffer);
-            retired.last_used = std::max(retired.last_used, cached.last_used);
-        }
-        m_texture_cache.clear();
-        m_buffer_cache.clear();
-        m_retired_heaps.push_back(std::move(retired));
-        m_heap = nullptr;
-    }
+    ReleaseTransientMemory();
 
     auto heap = m_device->CreateHeap({.size = AlignUp(size, m_info.heap_granularity),
                                       .memory = HeapMemory::DeviceLocal});
@@ -1069,24 +1052,14 @@ void RM::RenderGraph::ReleaseUnusedResources(bool release_all)
                   [&](const CachedTexture& cached)
                   {
                       if (!expired(cached.last_used)) return false;
-                      m_device->DestroyTexture(cached.texture);
+                      m_device->Retire(cached.texture);
                       return true;
                   });
     std::erase_if(m_buffer_cache,
                   [&](const CachedBuffer& cached)
                   {
                       if (!expired(cached.last_used)) return false;
-                      m_device->DestroyBuffer(cached.buffer);
-                      return true;
-                  });
-    std::erase_if(m_retired_heaps,
-                  [&](const RetiredHeap& retired)
-                  {
-                      if (!expired(retired.last_used)) return false;
-                      for (const auto* texture : retired.textures)
-                          m_device->DestroyTexture(texture);
-                      for (const auto* buffer : retired.buffers) m_device->DestroyBuffer(buffer);
-                      m_device->DestroyHeap(retired.heap);
+                      m_device->Retire(cached.buffer);
                       return true;
                   });
 }
@@ -1095,6 +1068,6 @@ void RM::RenderGraph::ReleaseTransientMemory()
 {
     if (!m_device) return;
     ReleaseUnusedResources(true);
-    if (m_heap) m_device->DestroyHeap(m_heap);
+    m_device->Retire(m_heap);
     m_heap = nullptr;
 }

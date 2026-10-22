@@ -11,12 +11,18 @@ namespace RM
         Fence& operator=(const Fence&) = delete;
         ~Fence();
         [[nodiscard]] void* GetNativeHandle() const;
+        [[nodiscard]] uint64_t GetCompletedValue() const;
+        [[nodiscard]] uint64_t GetSignaledValue() const noexcept { return m_value; }
+        [[nodiscard]] bool IsComplete(uint64_t value) const { return GetCompletedValue() >= value; }
         [[nodiscard]] Result<void> Wait(uint64_t value) const;
+        [[nodiscard]] Result<void> Wait() const { return Wait(m_value); }
 
     private:
         Fence() = default;
         friend class Device;
+        friend class Queue;
         Device* m_device = nullptr;
+        uint64_t m_value = 0;
         [[nodiscard]] Result<void> Initialize(Device* device);
 #ifdef RIMERA_MAC
         NS::SharedPtr<MTL::SharedEvent> m_event;
@@ -32,12 +38,14 @@ namespace RM
         Queue& operator=(const Queue&) = delete;
         ~Queue();
 
-        void AddResidencySet(const ResidencySet* residency_set) const;
-        void RemoveResidencySet(const ResidencySet* residency_set) const;
-        [[nodiscard]] Result<void> WaitIdle();
-        [[nodiscard]] Result<void> Signal(const Fence* fence, uint64_t value) const;
+        void AddResidencySet(ResidencySet* residency_set) const;
+        void RemoveResidencySet(ResidencySet* residency_set) const;
+        [[nodiscard]] Result<void> WaitIdle() const;
+        [[nodiscard]] Result<void> Signal(Fence* fence, uint64_t value) const;
+        [[nodiscard]] Result<uint64_t> Signal(Fence* fence) const;
         void Submit(const Command* command) const;
 
+        [[nodiscard]] const Fence* GetFence() const noexcept { return m_fence; }
         void* GetNativeHandle() const;
 
     private:
@@ -51,8 +59,12 @@ namespace RM
         ComPtr<ID3D12CommandQueue> m_queue;
 #endif
         friend class Device;
+        friend class Resident;
+        friend class ResidencySet;
         [[nodiscard]] Result<void> Initialize(Device* device, QueueType type);
+        [[nodiscard]] bool IsBusySince(uint64_t value) const;
         Device* m_device = nullptr;
-        uint64_t m_value = 0;
+        Fence* m_fence = nullptr;
+        uint64_t m_id = 0;
     };
 } // namespace RM

@@ -5,6 +5,7 @@
 
 RM::Buffer::~Buffer()
 {
+    ReleaseResidency();
     if (m_device && m_resource_index != UINT32_MAX) m_device->RemoveDescriptor(this);
     Unmap();
     if (m_heap && m_heap_allocated) m_heap->Free(m_heap_offset);

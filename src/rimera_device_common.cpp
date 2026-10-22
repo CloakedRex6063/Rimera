@@ -17,13 +17,32 @@ RM::Result<RM::Fence*> RM::Device::CreateFence()
     return CreateObject<Fence>(this);
 }
 
-void RM::Device::DestroyFence(const Fence* fence)
+void RM::Device::DestroyImmediate(const Fence* fence)
 {
+    if (!fence) return;
+    FlushRetired(fence);
     delete fence;
 }
 
-void RM::Device::DestroyQueue(const Queue* queue)
+RM::Result<RM::Queue*> RM::Device::CreateQueue(QueueType type)
 {
+    auto result = CreateObject<Queue>(this, type);
+    if (!result) return std::unexpected(result.error());
+    auto* queue = *result;
+    queue->m_id = ++m_queue_id;
+#ifdef RIMERA_DEBUG
+    m_queues.emplace(queue->m_id, queue);
+#endif
+    queue->AddResidencySet(m_core_residency_set);
+    return queue;
+}
+
+void RM::Device::DestroyImmediate(const Queue* queue)
+{
+    if (!queue) return;
+#ifdef RIMERA_DEBUG
+    m_queues.erase(queue->m_id);
+#endif
     delete queue;
 }
 
@@ -33,7 +52,7 @@ RM::Result<RM::Swapchain*> RM::Device::CreateSwapchain(Queue* queue,
     return CreateObject<Swapchain>(this, queue, info);
 }
 
-void RM::Device::DestroySwapchain(const Swapchain* swapchain) const
+void RM::Device::DestroyImmediate(const Swapchain* swapchain) const
 {
     delete swapchain;
 }
@@ -43,7 +62,7 @@ RM::Result<RM::Command*> RM::Device::CreateCommand(CommandType type)
     return CreateObject<Command>(this, type);
 }
 
-void RM::Device::DestroyCommand(const Command* command) const
+void RM::Device::DestroyImmediate(const Command* command) const
 {
     delete command;
 }
@@ -53,7 +72,7 @@ RM::Result<RM::CommandRing*> RM::Device::CreateCommandRing(QueueType type)
     return CreateObject<CommandRing>(this, type);
 }
 
-void RM::Device::DestroyCommandRing(const CommandRing* command_ring) const
+void RM::Device::DestroyImmediate(const CommandRing* command_ring) const
 {
     delete command_ring;
 }
@@ -63,7 +82,7 @@ RM::Result<RM::ResidencySet*> RM::Device::CreateResidencySet()
     return CreateObject<ResidencySet>(this);
 }
 
-void RM::Device::DestroyResidencySet(const ResidencySet* residency_set) const
+void RM::Device::DestroyImmediate(const ResidencySet* residency_set) const
 {
     delete residency_set;
 }
@@ -83,7 +102,7 @@ RM::Result<RM::Pipeline*> RM::Device::CreatePipeline(const MeshGraphicsPipelineC
     return CreateObject<Pipeline>(this, info);
 }
 
-void RM::Device::DestroyPipeline(const Pipeline* pipeline)
+void RM::Device::DestroyImmediate(const Pipeline* pipeline) const
 {
     delete pipeline;
 }
@@ -93,8 +112,11 @@ RM::Result<RM::Texture*> RM::Device::CreateTexture(const TextureCreateInfo& info
     return CreateObject<Texture>(this, info);
 }
 
-void RM::Device::DestroyTexture(const Texture* texture) const
+void RM::Device::DestroyImmediate(const Texture* texture) const
 {
+#ifdef RIMERA_DEBUG
+    if (texture) texture->ValidateIdle("Texture");
+#endif
     delete texture;
 }
 
@@ -108,8 +130,11 @@ RM::Result<RM::Buffer*> RM::Device::CreateBuffer(const BufferCreateInfo& info)
     return CreateObject<Buffer>(this, info);
 }
 
-void RM::Device::DestroyBuffer(const Buffer* buffer)
+void RM::Device::DestroyImmediate(const Buffer* buffer) const
 {
+#ifdef RIMERA_DEBUG
+    if (buffer) buffer->ValidateIdle("Buffer");
+#endif
     delete buffer;
 }
 
@@ -118,7 +143,7 @@ RM::Result<RM::Sampler*> RM::Device::CreateSampler(const SamplerCreateInfo& info
     return CreateObject<Sampler>(this, info);
 }
 
-void RM::Device::DestroySampler(const Sampler* sampler)
+void RM::Device::DestroyImmediate(const Sampler* sampler) const
 {
     delete sampler;
 }
@@ -128,8 +153,11 @@ RM::Result<RM::Heap*> RM::Device::CreateHeap(const HeapCreateInfo& info)
     return CreateObject<Heap>(this, info);
 }
 
-void RM::Device::DestroyHeap(const Heap* heap) const
+void RM::Device::DestroyImmediate(const Heap* heap) const
 {
+#ifdef RIMERA_DEBUG
+    if (heap) heap->ValidateIdle("Heap");
+#endif
     delete heap;
 }
 
@@ -138,7 +166,7 @@ RM::Result<RM::RenderGraph*> RM::Device::CreateRenderGraph(const RenderGraphCrea
     return CreateObject<RenderGraph>(this, info);
 }
 
-void RM::Device::DestroyRenderGraph(const RenderGraph* render_graph) const
+void RM::Device::DestroyImmediate(const RenderGraph* render_graph) const
 {
     delete render_graph;
 }
@@ -179,7 +207,7 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
     auto mapped = staging->Map();
     if (!mapped)
     {
-        DestroyBuffer(staging);
+        DestroyImmediate(staging);
         return std::unexpected(mapped.error());
     }
     auto* destination = static_cast<uint8_t*>(*mapped);
@@ -202,13 +230,51 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
     if (result)
     {
         m_upload_queue->Submit(m_upload_command);
-        result = m_upload_queue->Signal(m_upload_fence, ++m_upload_value);
-        if (result) result = m_upload_fence->Wait(m_upload_value);
+        auto value = m_upload_queue->Signal(m_upload_fence);
+        result = value ? m_upload_fence->Wait(*value) : Result<void>(std::unexpected(value.error()));
     }
 
-    m_core_residency_set->RemoveAllocation(staging);
     m_core_residency_set->RemoveAllocation(texture);
     m_core_residency_set->Commit();
-    DestroyBuffer(staging);
+    DestroyImmediate(staging);
     return result;
 }
+
+void RM::Device::ReleaseRetired()
+{
+    std::vector<RetiredObject> completed;
+    std::erase_if(m_retired,
+                  [&](const RetiredObject& retired)
+                  {
+                      if (!retired.fence->IsComplete(retired.value)) return false;
+                      completed.push_back(retired);
+                      return true;
+                  });
+    for (const auto& retired : completed) retired.destroy(retired.object);
+}
+
+void RM::Device::FlushRetired(const Fence* fence)
+{
+    std::vector<RetiredObject> flushed;
+    std::erase_if(m_retired,
+                  [&](const RetiredObject& retired)
+                  {
+                      if (fence && retired.fence != fence) return false;
+                      flushed.push_back(retired);
+                      return true;
+                  });
+    for (const auto& retired : flushed)
+    {
+        if (retired.fence->GetSignaledValue() >= retired.value)
+            static_cast<void>(retired.fence->Wait(retired.value));
+        retired.destroy(retired.object);
+    }
+}
+
+#ifdef RIMERA_DEBUG
+const RM::Queue* RM::Device::FindQueue(uint64_t id) const
+{
+    const auto it = m_queues.find(id);
+    return it == m_queues.end() ? nullptr : it->second;
+}
+#endif

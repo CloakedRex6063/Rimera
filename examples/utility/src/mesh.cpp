@@ -141,8 +141,8 @@ RM::Result<RM::Buffer*> Mesh::GenerateIndexBuffer() const
 Mesh::~Mesh()
 {
     if (!m_device) return;
-    m_device->DestroyBuffer(m_vertex_buffer);
-    m_device->DestroyBuffer(m_vertex_index_buffer);
-    m_device->DestroyBuffer(m_triangle_buffer);
-    m_device->DestroyBuffer(m_meshlet_buffer);
+    m_device->DestroyImmediate(m_vertex_buffer);
+    m_device->DestroyImmediate(m_vertex_index_buffer);
+    m_device->DestroyImmediate(m_triangle_buffer);
+    m_device->DestroyImmediate(m_meshlet_buffer);
 }

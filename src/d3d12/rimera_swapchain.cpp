@@ -86,11 +86,7 @@ void RM::Swapchain::DestroyTextures()
 {
     for (auto*& texture : m_textures)
     {
-        if (texture)
-        {
-            m_device->GetCoreResidencySet()->RemoveAllocation(texture);
-            m_device->DestroyTexture(texture);
-        }
+        if (texture) m_device->DestroyImmediate(texture);
         texture = nullptr;
     }
 }
