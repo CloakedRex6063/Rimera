@@ -55,6 +55,7 @@ if (APPLE)
             src/metal/rimera_metal.mm
             src/metal/rimera_device.cpp
             src/metal/rimera_queue.cpp
+            src/metal/rimera_swapchain.cpp
             src/metal/rimera_residency.cpp
             src/metal/rimera_command.cpp
             src/metal/rimera_texture.cpp
@@ -71,6 +72,7 @@ elseif (WIN32)
             PRIVATE
             src/d3d12/rimera_device.cpp
             src/d3d12/rimera_queue.cpp
+            src/d3d12/rimera_swapchain.cpp
             src/d3d12/rimera_residency.cpp
             src/d3d12/rimera_command.cpp
             src/d3d12/rimera_texture.cpp

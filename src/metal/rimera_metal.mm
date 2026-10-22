@@ -910,7 +910,7 @@ void RM::Metal::UpdateSwapLayerScale(CA::MetalLayer* swap_layer, void* window)
     [(__bridge CAMetalLayer*)swap_layer setContentsScale:ns_window.backingScaleFactor];
 }
 
-NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Device>& device, const DeviceCreateInfo& info) {
+NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Device>& device, const SwapchainCreateInfo& info) {
     auto swap_layer = NS::TransferPtr(CA::MetalLayer::layer());
     auto* ns_window = (NSWindow*)info.window;
     NSView* ns_view = [ns_window contentView];

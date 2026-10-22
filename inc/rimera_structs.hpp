@@ -74,11 +74,15 @@ namespace RM
 
     struct DeviceCreateInfo
     {
+        uint32_t resource_descriptor_count = 8192;
+        uint32_t sampler_descriptor_count = 256;
+    };
+
+    struct SwapchainCreateInfo
+    {
         void* window = nullptr;
         uint32_t width = 0;
         uint32_t height = 0;
-        uint32_t resource_descriptor_count = 8192;
-        uint32_t sampler_descriptor_count = 256;
     };
 
     struct DisplayInfo

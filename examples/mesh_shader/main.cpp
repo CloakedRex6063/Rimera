@@ -228,12 +228,7 @@ int main()
     }
     auto* window = *window_result;
     auto size = window->GetFramebufferSize();
-    RM::DeviceCreateInfo create_info{
-        .window = window->GetNativeHandle(),
-        .width = size.x,
-        .height = size.y,
-    };
-    auto result_device = RM::CreateDevice(create_info);
+    auto result_device = RM::CreateDevice({});
     if (!result_device)
     {
         std::cerr << result_device.error() << '\n';
@@ -241,10 +236,36 @@ int main()
         return 1;
     }
     auto* device = *result_device;
+    auto result_queue = device->CreateQueue(RM::QueueType::Graphics);
+    if (!result_queue)
+    {
+        std::cerr << result_queue.error() << '\n';
+        RM::DestroyDevice(device);
+        delete window;
+        return 1;
+    }
+    auto* queue = *result_queue;
+    auto result_swapchain = device->CreateSwapchain(queue,
+                                                    {
+                                                        .window = window->GetNativeHandle(),
+                                                        .width = size.x,
+                                                        .height = size.y,
+                                                    });
+    if (!result_swapchain)
+    {
+        std::cerr << result_swapchain.error() << '\n';
+        device->DestroyQueue(queue);
+        RM::DestroyDevice(device);
+        delete window;
+        return 1;
+    }
+    auto* swapchain = *result_swapchain;
     auto result_command_ring = device->CreateCommandRing(RM::CommandType::Graphics);
     if (!result_command_ring)
     {
         std::cerr << result_command_ring.error() << '\n';
+        device->DestroySwapchain(swapchain);
+        device->DestroyQueue(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -256,6 +277,8 @@ int main()
     {
         std::cerr << result_graph.error() << '\n';
         device->DestroyCommandRing(command_ring);
+        device->DestroySwapchain(swapchain);
+        device->DestroyQueue(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -268,6 +291,8 @@ int main()
         std::cerr << result_model.error() << '\n';
         device->DestroyRenderGraph(graph);
         device->DestroyCommandRing(command_ring);
+        device->DestroySwapchain(swapchain);
+        device->DestroyQueue(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -281,6 +306,8 @@ int main()
         scene.Cleanup();
         device->DestroyRenderGraph(graph);
         device->DestroyCommandRing(command_ring);
+        device->DestroySwapchain(swapchain);
+        device->DestroyQueue(queue);
         RM::DestroyDevice(device);
         delete window;
         return 1;
@@ -317,7 +344,7 @@ int main()
             size = window->GetFramebufferSize();
             if (size.x && size.y)
             {
-                if (auto result = device->Resize(size.x, size.y); !result)
+                if (auto result = swapchain->Resize(size.x, size.y); !result)
                 {
                     std::cerr << result.error() << '\n';
                     exit_code = 1;
@@ -337,11 +364,17 @@ int main()
                                : CameraMode::Orbit);
         
         const glm::mat4 view_projection = camera.GetViewProjection();
-        const RM::DisplayInfo display_info = device->GetDisplayInfo();
+        const RM::DisplayInfo display_info = swapchain->GetDisplayInfo();
         imgui->SetDisplayInfo(display_info);
 
-        auto* queue = device->GetGraphicsQueue();
         if (auto result = device->NewFrame(queue); !result)
+        {
+            std::cerr << result.error() << '\n';
+            exit_code = 1;
+            break;
+        }
+
+        if (auto result = swapchain->Acquire(); !result)
         {
             std::cerr << result.error() << '\n';
             exit_code = 1;
@@ -352,7 +385,7 @@ int main()
 
         command->Begin();
 
-        auto output = graph->ImportTexture(device->GetCurrentBackBuffer(), present, present);
+        auto output = graph->ImportTexture(swapchain->GetCurrentBackBuffer(), present, present);
         auto visibility = graph->CreateTexture(
             RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kVisibilityFormat).Build(),
             "visibility");
@@ -417,7 +450,7 @@ int main()
 
         queue->Submit(command);
 
-        if (auto result = queue->Present(); !result)
+        if (auto result = swapchain->Present(); !result)
         {
             std::cerr << result.error() << '\n';
             exit_code = 1;
@@ -426,7 +459,7 @@ int main()
 
         command_ring->Next();
     }
-    if (auto result = device->GetGraphicsQueue()->WaitIdle(); !result)
+    if (auto result = queue->WaitIdle(); !result)
     {
         std::cerr << result.error() << '\n';
         exit_code = 1;
@@ -435,6 +468,8 @@ int main()
     ImGuiLayer::Destroy(imgui);
     scene.Cleanup();
     device->DestroyCommandRing(command_ring);
+    device->DestroySwapchain(swapchain);
+    device->DestroyQueue(queue);
     RM::DestroyDevice(device);
     delete window;
     return exit_code;

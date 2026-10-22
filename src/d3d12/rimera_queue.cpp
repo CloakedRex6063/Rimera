@@ -70,13 +70,6 @@ void RM::Queue::Submit(const Command* command) const
     m_queue->ExecuteCommandLists(1, &native_command);
 }
 
-RM::Result<void> RM::Queue::Present() const
-{
-    if (FAILED(m_device->m_swapchain->Present(0, 0)))
-        return std::unexpected("Failed to present swapchain");
-    return {};
-}
-
 void* RM::Queue::GetNativeHandle() const
 {
     return m_queue.Get();

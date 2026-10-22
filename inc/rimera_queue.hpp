@@ -37,7 +37,6 @@ namespace RM
         [[nodiscard]] Result<void> WaitIdle();
         [[nodiscard]] Result<void> Signal(const Fence* fence, uint64_t value) const;
         void Submit(const Command* command) const;
-        [[nodiscard]] Result<void> Present() const;
 
         void* GetNativeHandle() const;
 
@@ -47,7 +46,7 @@ namespace RM
         void AddResidencySet(const MTL::ResidencySet* residency_set) const;
         void RemoveResidencySet(const MTL::ResidencySet* residency_set) const;
         NS::SharedPtr<MTL4::CommandQueue> m_queue;
-        friend class Device;
+        friend class Swapchain;
 #elifdef RIMERA_WINDOWS
         ComPtr<ID3D12CommandQueue> m_queue;
 #endif

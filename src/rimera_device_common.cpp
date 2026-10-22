@@ -27,6 +27,17 @@ void RM::Device::DestroyQueue(const Queue* queue)
     delete queue;
 }
 
+RM::Result<RM::Swapchain*> RM::Device::CreateSwapchain(Queue* queue,
+                                                       const SwapchainCreateInfo& info)
+{
+    return CreateObject<Swapchain>(this, queue, info);
+}
+
+void RM::Device::DestroySwapchain(const Swapchain* swapchain) const
+{
+    delete swapchain;
+}
+
 RM::Result<RM::Command*> RM::Device::CreateCommand(CommandType type)
 {
     return CreateObject<Command>(this, type);
@@ -138,6 +149,12 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
     if (!footprint.size || footprint.size > UINT32_MAX)
         return std::unexpected("Texture format does not support initial data");
 
+    if (!m_upload_queue)
+    {
+        auto queue = CreateQueue(QueueType::Transfer);
+        if (!queue) return std::unexpected(queue.error());
+        m_upload_queue = *queue;
+    }
     if (!m_upload_command)
     {
         auto command = CreateCommand(CommandType::Graphics);
@@ -184,8 +201,8 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
     m_upload_command->End();
     if (result)
     {
-        m_graphics_queue->Submit(m_upload_command);
-        result = m_graphics_queue->Signal(m_upload_fence, ++m_upload_value);
+        m_upload_queue->Submit(m_upload_command);
+        result = m_upload_queue->Signal(m_upload_fence, ++m_upload_value);
         if (result) result = m_upload_fence->Wait(m_upload_value);
     }
 

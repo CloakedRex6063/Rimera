@@ -58,7 +58,7 @@ namespace RM::Metal
     void ConfigureSwapLayer(CA::MetalLayer* swap_layer, bool hdr);
     void UpdateSwapLayerScale(CA::MetalLayer* swap_layer, void* window);
     NS::SharedPtr<CA::MetalLayer> CreateSwapLayer(NS::SharedPtr<MTL::Device>& device,
-                                                  const DeviceCreateInfo& info);
+                                                  const SwapchainCreateInfo& info);
     MTL::Stages ToBarrierStages(BarrierStage stages);
     MTL::StorageMode ToStorageMode(HeapMemory memory);
     NS::SharedPtr<MTL::TextureDescriptor> CreateTextureDescriptor(const TextureCreateInfo& info);

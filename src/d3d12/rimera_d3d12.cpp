@@ -50,6 +50,33 @@ void RM::D3D12::EnableDebugLayer()
 }
 #endif
 
+std::string RM::D3D12::HResultMessage(const HRESULT hr)
+{
+    char* buffer = nullptr;
+    DWORD length = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER |
+        FORMAT_MESSAGE_FROM_SYSTEM |
+        FORMAT_MESSAGE_IGNORE_INSERTS,
+        nullptr,
+        static_cast<DWORD>(hr),
+        0,
+        reinterpret_cast<LPSTR>(&buffer),
+        0,
+        nullptr);
+
+    if (length == 0)
+        return "Unknown HRESULT";
+
+    std::string message(buffer, length);
+    LocalFree(buffer);
+
+    while (!message.empty() &&
+           (message.back() == '\r' || message.back() == '\n'))
+        message.pop_back();
+
+    return message;
+}
+
 // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-displayconfig_sdr_white_level
 float RM::D3D12::GetSdrWhiteLevel(const wchar_t* device_name)
 {

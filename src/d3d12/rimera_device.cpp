@@ -23,49 +23,10 @@ static void CALLBACK D3D12LogCallback(
                  message);
 }
 
-static std::string HResultMessage(const HRESULT hr)
-{
-    char* buffer = nullptr;
-    DWORD length = FormatMessageA(
-        FORMAT_MESSAGE_ALLOCATE_BUFFER |
-        FORMAT_MESSAGE_FROM_SYSTEM |
-        FORMAT_MESSAGE_IGNORE_INSERTS,
-        nullptr,
-        static_cast<DWORD>(hr),
-        0,
-        reinterpret_cast<LPSTR>(&buffer),
-        0,
-        nullptr);
-
-    if (length == 0)
-        return "Unknown HRESULT";
-
-    std::string message(buffer, length);
-    LocalFree(buffer);
-
-    while (!message.empty() &&
-           (message.back() == '\r' || message.back() == '\n'))
-        message.pop_back();
-
-    return message;
-}
-
-static void SetSwapchainColorSpace(IDXGISwapChain4* swapchain, bool hdr)
-{
-    const auto color_space =
-        hdr ? DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709 : DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709;
-    UINT support = 0;
-    if (SUCCEEDED(swapchain->CheckColorSpaceSupport(color_space, &support)) &&
-        (support & DXGI_SWAP_CHAIN_COLOR_SPACE_SUPPORT_FLAG_PRESENT))
-        swapchain->SetColorSpace1(color_space);
-}
-
 RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 {
-    if (!info.window || !info.width || !info.height || !info.resource_descriptor_count ||
-        !info.sampler_descriptor_count)
+    if (!info.resource_descriptor_count || !info.sampler_descriptor_count)
         return std::unexpected("Invalid device creation parameters");
-    m_window = info.window;
 #ifdef RIMERA_DEBUG
     D3D12::EnableDebugLayer();
 #endif
@@ -82,9 +43,9 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 
     if (FAILED(result))
     {
-        std::cout << std::string(HResultMessage(result)) << std::endl;
+        std::cout << D3D12::HResultMessage(result) << std::endl;
         return std::unexpected("Failed to create D3D12 device, " +
-                               std::string(HResultMessage(result)));
+                               D3D12::HResultMessage(result));
     }
     if (FAILED(device.As(&m_device)))
         return std::unexpected("Required D3D12 device interface is unavailable");
@@ -100,47 +61,6 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     }
 #endif
 
-    auto graphics_queue_result = CreateQueue(QueueType::Graphics);
-    if (!graphics_queue_result) return std::unexpected(graphics_queue_result.error());
-    m_graphics_queue = std::move(*graphics_queue_result);
-
-    const bool hdr = QueryDisplayInfo().hdr;
-    SelectSwapchainFormat(hdr);
-    DXGI_SWAP_CHAIN_DESC1 swapchain_desc = {
-        .Width = info.width,
-        .Height = info.height,
-        .Format = m_swapchain_format,
-        .Stereo = false,
-        .SampleDesc = DXGI_SAMPLE_DESC{
-            .Count = 1,
-            .Quality = 0,
-        },
-        .BufferUsage =
-        DXGI_USAGE_RENDER_TARGET_OUTPUT,
-        .BufferCount = 3,
-        .Scaling = DXGI_SCALING_STRETCH,
-        .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
-        .AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED,
-        .Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING,
-    };
-    ComPtr<IDXGISwapChain1> swapchain;
-    result = m_factory->CreateSwapChainForHwnd(m_graphics_queue->m_queue.Get(),
-                                               static_cast<HWND>(info.window),
-                                               &swapchain_desc,
-                                               nullptr,
-                                               nullptr,
-                                               swapchain.GetAddressOf());
-
-    if (FAILED(result))
-    {
-        std::cout << "Failed to create swapchain, " + std::string(HResultMessage(result)) <<
-            '\n';
-        return std::unexpected("Failed to create swapchain, " +
-                               std::string(HResultMessage(result)));
-    }
-    if (FAILED(swapchain.As(&m_swapchain)))
-        return std::unexpected("Failed to obtain swapchain interface");
-    SetSwapchainColorSpace(m_swapchain.Get(), hdr);
     D3D12MA::ALLOCATOR_DESC alloc_desc{
         .Flags = D3D12MA::ALLOCATOR_FLAG_SINGLETHREADED,
         .pDevice = m_device.Get(),
@@ -172,9 +92,8 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
         m_frame_datas[i].fence_value = 0;
         auto fence_result = CreateFence();
         if (!fence_result) return std::unexpected(fence_result.error());
-        m_frame_datas[i].swapchain_fence = std::move(*fence_result);
+        m_frame_datas[i].fence = std::move(*fence_result);
     }
-    if (auto result = CreateSwapchainTextures(); !result) return result;
 
     if (auto result = CreateRootSignature(); !result) return std::unexpected(result.error());
 
@@ -189,18 +108,15 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 
 RM::Device::~Device()
 {
-    if (m_graphics_queue) static_cast<void>(m_graphics_queue->WaitIdle());
+    for (const auto& frame : m_frame_datas)
+        if (frame.fence) static_cast<void>(frame.fence->Wait(frame.fence_value));
     if (m_upload_command) DestroyCommand(m_upload_command);
     if (m_upload_fence) DestroyFence(m_upload_fence);
+    if (m_upload_queue) DestroyQueue(m_upload_queue);
     for (auto [format, pipeline] : m_blit_pipelines) DestroyPipeline(pipeline);
     if (m_core_residency_set) m_core_residency_set->RemoveAllAllocations();
-    for (int i = 0; i < 3; i++)
-    {
-        DestroyTexture(m_frame_datas[i].swapchain_texture);
-        DestroyFence(m_frame_datas[i].swapchain_fence);
-    }
+    for (const auto& frame : m_frame_datas) DestroyFence(frame.fence);
     DestroyResidencySet(m_core_residency_set);
-    DestroyQueue(m_graphics_queue);
 
     if (m_callback_registered)
     {
@@ -390,98 +306,14 @@ void* RM::Device::GetNativeRootSignature() const
     return m_root_sig.Get();
 }
 
-RM::Texture* RM::Device::GetCurrentBackBuffer()
-{
-    return m_frame_datas[m_swapchain->GetCurrentBackBufferIndex()].swapchain_texture;
-}
-
 RM::Result<void> RM::Device::NewFrame(Queue* queue)
 {
     auto& previous = m_frame_datas[m_current_frame];
-    if (auto result = queue->Signal(previous.swapchain_fence, ++previous.fence_value); !result)
+    if (auto result = queue->Signal(previous.fence, ++previous.fence_value); !result)
         return result;
     m_current_frame = (m_current_frame + 1) % m_frame_datas.size();
     const auto& frame = m_frame_datas[m_current_frame];
-    return frame.swapchain_fence->Wait(frame.fence_value);
-}
-
-RM::Result<void> RM::Device::Resize(uint32_t width, uint32_t height)
-{
-    if (!width || !height) return {};
-    if (auto result = m_graphics_queue->WaitIdle(); !result) return std::unexpected(result.error());
-    for (auto& frame_data : m_frame_datas)
-    {
-        m_core_residency_set->RemoveAllocation(frame_data.swapchain_texture);
-        delete frame_data.swapchain_texture;
-        frame_data.swapchain_texture = nullptr;
-    }
-    const bool hdr = QueryDisplayInfo().hdr;
-    SelectSwapchainFormat(hdr);
-    if (FAILED(m_swapchain->ResizeBuffers(3,
-                                          width,
-                                          height,
-                                          m_swapchain_format,
-                                          DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)))
-        return std::unexpected("Failed to resize swapchain");
-    SetSwapchainColorSpace(m_swapchain.Get(), hdr);
-    return CreateSwapchainTextures();
-}
-
-void RM::Device::SelectSwapchainFormat(bool hdr)
-{
-    m_swapchain_format = hdr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
-    m_backbuffer_format = hdr ? Format::RGBA16_Float : Format::BGRA8_UNorm;
-}
-
-RM::Result<void> RM::Device::CreateSwapchainTextures()
-{
-    for (uint32_t i = 0; i < m_frame_datas.size(); i++)
-    {
-        ID3D12Resource* swapchain_texture = nullptr;
-        if (FAILED(m_swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchain_texture))))
-            return std::unexpected("Failed to get swapchain buffer");
-        auto texture = CreateObject<Texture>(this,
-                                             swapchain_texture,
-                                             TextureUsage::RenderTarget,
-                                             m_backbuffer_format);
-        swapchain_texture->Release();
-        if (!texture) return std::unexpected(texture.error());
-        m_frame_datas[i].swapchain_texture = *texture;
-        m_core_residency_set->AddAllocation(m_frame_datas[i].swapchain_texture);
-    }
-    return {};
-}
-
-RM::DisplayInfo RM::Device::GetDisplayInfo()
-{
-    if (m_swapchain_format != DXGI_FORMAT_R16G16B16A16_FLOAT) return {};
-    return QueryDisplayInfo();
-}
-
-RM::DisplayInfo RM::Device::QueryDisplayInfo()
-{
-    const HMONITOR monitor =
-        MonitorFromWindow(static_cast<HWND>(m_window), MONITOR_DEFAULTTONEAREST);
-    ComPtr<IDXGIOutput6> output6;
-    ComPtr<IDXGIOutput> output;
-    for (UINT index = 0;
-         m_adapter->EnumOutputs(index, output.ReleaseAndGetAddressOf()) != DXGI_ERROR_NOT_FOUND;
-         ++index)
-    {
-        DXGI_OUTPUT_DESC output_desc{};
-        if (FAILED(output->GetDesc(&output_desc)) || output_desc.Monitor != monitor) continue;
-        if (FAILED(output.As(&output6))) return {};
-        break;
-    }
-    if (!output6) return {};
-
-    DXGI_OUTPUT_DESC1 desc{};
-    if (FAILED(output6->GetDesc1(&desc))) return {};
-    if (desc.ColorSpace != DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020) return {};
-    const float sdr_white = D3D12::GetSdrWhiteLevel(desc.DeviceName);
-    return {.hdr = true,
-            .headroom = std::max(1.f, desc.MaxLuminance / sdr_white),
-            .sdr_white_scale = sdr_white / 80.f};
+    return frame.fence->Wait(frame.fence_value);
 }
 
 void* RM::Device::GetNativeHandle() const

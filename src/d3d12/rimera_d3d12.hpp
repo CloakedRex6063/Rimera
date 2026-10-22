@@ -12,6 +12,7 @@ namespace RM::D3D12
 #endif
 
     float GetSdrWhiteLevel(const wchar_t* device_name);
+    std::string HResultMessage(HRESULT hr);
 
     D3D12_COMMAND_LIST_TYPE GetQueueType(QueueType type);
     D3D12_RESOURCE_DESC GetResourceDesc(const BufferCreateInfo& info);

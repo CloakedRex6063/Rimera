@@ -72,15 +72,6 @@ void RM::Queue::Submit(const Command* command) const
     m_queue->commit(buffers, 1);
 }
 
-RM::Result<void> RM::Queue::Present() const
-{
-    if (!m_device->m_drawable) return std::unexpected("No drawable is available");
-    auto* drawable = static_cast<MTL::Drawable*>(m_device->m_drawable);
-    m_queue->signalDrawable(drawable);
-    drawable->present();
-    return {};
-}
-
 void RM::Queue::AddResidencySet(const MTL::ResidencySet* residency_set) const
 {
     m_queue->addResidencySet(residency_set);

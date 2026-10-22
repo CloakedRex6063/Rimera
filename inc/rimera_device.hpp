@@ -7,6 +7,7 @@
 #include "rimera_residency.hpp"
 #include "rimera_sampler.hpp"
 #include "rimera_shader.hpp"
+#include "rimera_swapchain.hpp"
 #include "rimera_texture.hpp"
 
 #ifdef RIMERA_MAC
@@ -32,6 +33,10 @@ namespace RM
 
         [[nodiscard]] Result<Queue*> CreateQueue(QueueType type);
         void DestroyQueue(const Queue* queue);
+
+        [[nodiscard]] Result<Swapchain*> CreateSwapchain(Queue* queue,
+                                                         const SwapchainCreateInfo& info);
+        void DestroySwapchain(const Swapchain* swapchain) const;
 
         [[nodiscard]] Result<Command*> CreateCommand(CommandType type);
         void DestroyCommand(const Command* command) const;
@@ -82,18 +87,7 @@ namespace RM
             return m_core_residency_set;
         }
 
-        Queue* GetGraphicsQueue() const
-        {
-            return m_graphics_queue;
-        }
-
-        Texture* GetCurrentBackBuffer();
-
         [[nodiscard]] Result<void> NewFrame(Queue* queue);
-
-        [[nodiscard]] Result<void> Resize(uint32_t width, uint32_t height);
-
-        [[nodiscard]] DisplayInfo GetDisplayInfo();
 
         [[nodiscard]] void* GetNativeHandle() const;
 
@@ -116,11 +110,10 @@ namespace RM
             return object;
         }
         ResidencySet* m_core_residency_set = nullptr;
-        Queue* m_graphics_queue = nullptr;
+        Queue* m_upload_queue = nullptr;
         Command* m_upload_command = nullptr;
         Fence* m_upload_fence = nullptr;
         uint64_t m_upload_value = 0;
-        void* m_window = nullptr;
         std::unordered_map<Format, Pipeline*> m_blit_pipelines;
 
         [[nodiscard]] Result<void> UploadTexture(Texture* texture, const void* data);
@@ -138,6 +131,7 @@ namespace RM
         friend class Buffer;
         friend class Sampler;
         friend class Heap;
+        friend class Swapchain;
 
 #ifdef RIMERA_MAC
         [[nodiscard]] Result<uint32_t> AddDescriptor(const Texture* texture);
@@ -146,10 +140,7 @@ namespace RM
         NS::SharedPtr<MTL::Buffer> m_resource_descriptor_heap;
         NS::SharedPtr<MTL::Buffer> m_sampler_descriptor_heap;
         NS::SharedPtr<MTL::Buffer> m_constant_arena;
-        NS::SharedPtr<CA::MetalLayer> m_swap_layer;
-        CA::MetalDrawable* m_drawable = nullptr;
         IRRootSignature* m_root_sig = nullptr;
-        std::unordered_map<uint64_t, Texture*> m_swapchain_textures{};
         Fence* m_frame_fence = nullptr;
         std::array<uint64_t, 3> m_frame_values{};
         uint64_t m_frame_value = 0;
@@ -190,9 +181,6 @@ namespace RM
         [[nodiscard]] Result<DescriptorHeap> CreateDescriptorHeap(
             D3D12_DESCRIPTOR_HEAP_TYPE heap_type,
             uint32_t count) const;
-        [[nodiscard]] DisplayInfo QueryDisplayInfo();
-        [[nodiscard]] Result<void> CreateSwapchainTextures();
-        void SelectSwapchainFormat(bool hdr);
         ComPtr<ID3D12Device15> m_device;
         ComPtr<IDXGIAdapter4> m_adapter;
         ComPtr<IDXGIFactory7> m_factory;
@@ -200,16 +188,12 @@ namespace RM
         DescriptorHeap m_dsv_heap;
         DescriptorHeap m_srv_heap;
         DescriptorHeap m_sampler_heap;
-        ComPtr<IDXGISwapChain4> m_swapchain;
-        DXGI_FORMAT m_swapchain_format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        Format m_backbuffer_format = Format::BGRA8_UNorm;
         ComPtr<D3D12MA::Allocator> m_allocator;
 
         struct FrameData
         {
-            Texture* swapchain_texture;
-            Fence* swapchain_fence;
-            uint64_t fence_value;
+            Fence* fence = nullptr;
+            uint64_t fence_value = 0;
         };
 
         std::array<FrameData, 3> m_frame_datas{};
