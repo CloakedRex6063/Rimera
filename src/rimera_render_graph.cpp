@@ -357,8 +357,30 @@ RM::Result<void> RM::RenderGraph::Execute(Command* command)
     if (result) result = Compile();
     if (result) result = AllocateTransients();
     if (result) result = Record(command);
+    CaptureTimeline();
     FinishFrame();
     return result;
+}
+
+void RM::RenderGraph::CaptureTimeline()
+{
+    m_timeline.step_count = static_cast<uint32_t>(m_steps.size());
+    m_timeline.passes.clear();
+    m_timeline.resources.clear();
+    for (const auto& pass : m_passes)
+        m_timeline.passes.push_back({.name = pass.name, .type = pass.type});
+    for (uint32_t step = 0; step < m_steps.size(); ++step)
+        for (const auto pass : m_steps[step].passes) m_timeline.passes[pass].step = step;
+    for (const auto& resource : m_resources)
+    {
+        if (resource.imported || resource.first_step == UINT32_MAX) continue;
+        m_timeline.resources.push_back({.name = resource.name,
+                                        .texture = resource.type == ResourceType::Texture,
+                                        .first_step = resource.first_step,
+                                        .last_step = resource.last_step,
+                                        .offset = resource.offset,
+                                        .size = resource.allocation.size});
+    }
 }
 
 RM::Result<void> RM::RenderGraph::Compile()

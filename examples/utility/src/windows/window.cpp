@@ -181,6 +181,7 @@ RM::Result<void> Window::Initialize()
     m_window = hwnd;
     m_running = true;
     m_size = GetWindowClientSize(hwnd);
+    m_framebuffer_size = m_size;
     return {};
 }
 
@@ -308,6 +309,7 @@ void Window::Tick()
     }
 
     m_size = GetWindowClientSize(hwnd);
+    m_framebuffer_size = m_size;
     m_resized = (m_size.x != previous_size.x || m_size.y != previous_size.y);
 }
 

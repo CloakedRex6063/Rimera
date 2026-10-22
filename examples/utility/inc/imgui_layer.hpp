@@ -4,6 +4,7 @@
 #include "array"
 
 struct ImGuiContext;
+struct ImPlotContext;
 class Window;
 
 namespace RM
@@ -36,10 +37,11 @@ public:
     [[nodiscard]] bool WantsMouse() const;
     [[nodiscard]] bool WantsKeyboard() const;
 
-    void ShowStatistics(const RM::RenderGraph& graph) const;
+    void ShowStatistics(const RM::RenderGraph& graph);
 
 private:
     static constexpr uint32_t kFramesInFlight = 3;
+    static constexpr uint32_t kFrameTimeHistory = 240;
 
     struct Constants
     {
@@ -86,10 +88,13 @@ private:
     RM::Device* m_device = nullptr;
     Window* m_window = nullptr;
     ImGuiContext* m_context = nullptr;
+    ImPlotContext* m_plot_context = nullptr;
     RM::Pipeline* m_pipeline = nullptr;
     RM::Sampler* m_sampler = nullptr;
     RM::Texture* m_font_texture = nullptr;
     std::array<FrameBuffers, kFramesInFlight> m_frames{};
     uint32_t m_frame_index = 0;
     RM::DisplayInfo m_display_info{};
+    std::array<float, kFrameTimeHistory> m_frame_times{};
+    uint32_t m_frame_time_index = 0;
 };

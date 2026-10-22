@@ -84,6 +84,8 @@ public:
     void Tick();
 
     [[nodiscard]] glm::uvec2 GetSize() const { return m_size; }
+    [[nodiscard]] glm::uvec2 GetFramebufferSize() const { return m_framebuffer_size; }
+    [[nodiscard]] float GetContentScale() const { return m_content_scale; }
     [[nodiscard]] void* GetNativeHandle() const;
 
     [[nodiscard]] bool IsKeyDown(Key key) const { return m_keys[static_cast<size_t>(key)]; }
@@ -128,6 +130,8 @@ private:
     bool m_running = false;
     bool m_resized = false;
     glm::uvec2 m_size{1280, 720};
+    glm::uvec2 m_framebuffer_size{1280, 720};
+    float m_content_scale = 1.f;
     void* m_window = nullptr;
     std::array<bool, static_cast<size_t>(Key::Count)> m_keys{};
     std::array<bool, static_cast<size_t>(Key::Count)> m_previous_keys{};

@@ -54,3 +54,17 @@ add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
 target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
 target_link_libraries(Utility PUBLIC imgui)
+
+FetchContent_Declare(
+        ImPlot
+        GIT_REPOSITORY https://github.com/epezent/implot
+        GIT_TAG v1.0
+)
+FetchContent_MakeAvailable(ImPlot)
+add_library(implot STATIC
+        ${implot_SOURCE_DIR}/implot.cpp
+        ${implot_SOURCE_DIR}/implot_demo.cpp
+        ${implot_SOURCE_DIR}/implot_items.cpp)
+target_include_directories(implot PUBLIC ${implot_SOURCE_DIR})
+target_link_libraries(implot PUBLIC imgui)
+target_link_libraries(Utility PUBLIC implot)

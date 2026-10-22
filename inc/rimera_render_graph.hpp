@@ -58,6 +58,30 @@ namespace RM
         uint64_t heap_size = 0;
     };
 
+    struct RenderGraphPassInfo
+    {
+        std::string name;
+        GraphPassType type = GraphPassType::Render;
+        uint32_t step = UINT32_MAX;
+    };
+
+    struct RenderGraphResourceInfo
+    {
+        std::string name;
+        bool texture = true;
+        uint32_t first_step = UINT32_MAX;
+        uint32_t last_step = 0;
+        uint64_t offset = 0;
+        uint64_t size = 0;
+    };
+
+    struct RenderGraphTimeline
+    {
+        uint32_t step_count = 0;
+        std::vector<RenderGraphPassInfo> passes;
+        std::vector<RenderGraphResourceInfo> resources;
+    };
+
     class RenderGraphContext
     {
     public:
@@ -131,6 +155,11 @@ namespace RM
         [[nodiscard]] const RenderGraphStatistics& GetStatistics() const noexcept
         {
             return m_statistics;
+        }
+
+        [[nodiscard]] const RenderGraphTimeline& GetTimeline() const noexcept
+        {
+            return m_timeline;
         }
 
         void ReleaseTransientMemory();
@@ -375,6 +404,7 @@ namespace RM
                                               std::vector<TextureBarrier>& textures,
                                               std::vector<BufferBarrier>& buffers);
         void FinishFrame();
+        void CaptureTimeline();
         void ReleaseUnusedResources(bool release_all);
 
         Device* m_device = nullptr;
@@ -389,6 +419,7 @@ namespace RM
         std::vector<RetiredHeap> m_retired_heaps;
         std::unordered_map<const void*, ResourceState> m_external_states;
         RenderGraphStatistics m_statistics{};
+        RenderGraphTimeline m_timeline{};
         uint64_t m_frame = 0;
     };
 

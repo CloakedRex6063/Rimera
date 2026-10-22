@@ -1,6 +1,7 @@
 #include "imgui_layer.hpp"
 #include "window.hpp"
 #include "imgui.h"
+#include "implot.h"
 #include "rimera_buffer.hpp"
 #include "rimera_builders.hpp"
 #include "rimera_command.hpp"
@@ -9,6 +10,7 @@
 #include "rimera_sampler.hpp"
 #include "rimera_texture.hpp"
 #include "algorithm"
+#include "cmath"
 #include "cstddef"
 #include "cstring"
 
@@ -164,6 +166,7 @@ ImGuiLayer::~ImGuiLayer()
     if (m_device) m_device->GetCoreResidencySet()->Commit();
     if (m_sampler) m_device->DestroySampler(m_sampler);
     if (m_pipeline) m_device->DestroyPipeline(m_pipeline);
+    if (m_plot_context) ImPlot::DestroyContext(m_plot_context);
     if (m_context) ImGui::DestroyContext(m_context);
 }
 
@@ -178,6 +181,8 @@ RM::Result<void> ImGuiLayer::Initialize(RM::Device* device, Window* window, RM::
     if (!m_context) return std::unexpected("Failed to create the ImGui context");
     ImGui::SetCurrentContext(m_context);
     ImGui::StyleColorsDark();
+    m_plot_context = ImPlot::CreateContext();
+    if (!m_plot_context) return std::unexpected("Failed to create the ImPlot context");
 
     auto& io = ImGui::GetIO();
     io.BackendRendererName = "Rimera";
@@ -223,6 +228,12 @@ RM::Result<void> ImGuiLayer::CreatePipeline(RM::Format format)
 RM::Result<void> ImGuiLayer::CreateFontTexture()
 {
     auto& io = ImGui::GetIO();
+    const float scale = std::max(1.f, m_window->GetContentScale());
+    ImFontConfig font_config;
+    font_config.SizePixels = 13.f * scale;
+    io.Fonts->AddFontDefault(&font_config);
+    io.FontGlobalScale = 1.f / scale;
+
     unsigned char* pixels = nullptr;
     int width = 0;
     int height = 0;
@@ -502,12 +513,51 @@ bool ImGuiLayer::WantsKeyboard() const
     return ImGui::GetIO().WantCaptureKeyboard;
 }
 
-void ImGuiLayer::ShowStatistics(const RM::RenderGraph& graph) const
+namespace
+{
+    constexpr double kMegabyte = 1024.0 * 1024.0;
+    constexpr float kPlotWidth = 480.f;
+    constexpr ImPlotFlags kPlotFlags = ImPlotFlags_NoLegend | ImPlotFlags_NoMouseText |
+                                       ImPlotFlags_NoMenus | ImPlotFlags_NoBoxSelect;
+
+    void DrawPlotRect(double x0, double y0, double x1, double y1, ImU32 color)
+    {
+        const ImVec2 a = ImPlot::PlotToPixels(x0, y0);
+        const ImVec2 b = ImPlot::PlotToPixels(x1, y1);
+        ImPlot::GetPlotDrawList()->AddRectFilled(ImVec2(std::min(a.x, b.x), std::min(a.y, b.y)),
+                                                 ImVec2(std::max(a.x, b.x), std::max(a.y, b.y)),
+                                                 color,
+                                                 2.f);
+    }
+
+    void ShowResourceTooltip(const RM::RenderGraphResourceInfo& resource)
+    {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(resource.name.c_str());
+        ImGui::Text("%s, %.2f MB at offset %.2f MB",
+                    resource.texture ? "Texture" : "Buffer",
+                    static_cast<double>(resource.size) / kMegabyte,
+                    static_cast<double>(resource.offset) / kMegabyte);
+        ImGui::Text("Steps %u to %u", resource.first_step, resource.last_step);
+        ImGui::EndTooltip();
+    }
+
+    ImU32 ResourceColor(size_t index)
+    {
+        return ImGui::GetColorU32(ImPlot::GetColormapColor(static_cast<int>(index)));
+    }
+}
+
+void ImGuiLayer::ShowStatistics(const RM::RenderGraph& graph)
 {
     ImGui::SetCurrentContext(m_context);
+    ImPlot::SetCurrentContext(m_plot_context);
     const auto& io = ImGui::GetIO();
     const auto& statistics = graph.GetStatistics();
-    constexpr double kMegabyte = 1024.0 * 1024.0;
+    const auto& timeline = graph.GetTimeline();
+
+    m_frame_times[m_frame_time_index] = io.DeltaTime * 1000.f;
+    m_frame_time_index = (m_frame_time_index + 1) % kFrameTimeHistory;
 
     ImGui::SetNextWindowPos(ImVec2(10.f, 10.f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.8f);
@@ -520,25 +570,178 @@ void ImGuiLayer::ShowStatistics(const RM::RenderGraph& graph) const
     const float frame_time = io.Framerate > 0.f ? 1000.f / io.Framerate : 0.f;
     ImGui::Text("%.1f FPS (%.2f ms)", io.Framerate, frame_time);
 
-    ImGui::SeparatorText("Render graph");
-    ImGui::Text("Passes: %u executed, %u culled, %u declared",
-                statistics.executed_passes,
-                statistics.culled_passes,
-                statistics.declared_passes);
-    ImGui::Text("Parallel batches: %u", statistics.parallel_batches);
-    ImGui::Text("Barriers: %u", statistics.barriers);
+    if (ImGui::CollapsingHeader("Frame time", ImGuiTreeNodeFlags_DefaultOpen) &&
+        ImPlot::BeginPlot("##FrameTime", ImVec2(kPlotWidth, 120.f), kPlotFlags))
+    {
+        const float highest = *std::ranges::max_element(m_frame_times);
+        ImPlot::SetupAxes(nullptr,
+                          "ms",
+                          ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_Lock,
+                          ImPlotAxisFlags_Lock);
+        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, kFrameTimeHistory - 1, ImPlotCond_Always);
+        ImPlot::SetupAxisLimits(ImAxis_Y1,
+                                0.0,
+                                std::max(1.0, static_cast<double>(highest) * 1.2),
+                                ImPlotCond_Always);
+        ImPlotSpec spec;
+        spec.Offset = static_cast<int>(m_frame_time_index);
+        ImPlot::PlotLine("Frame time",
+                         m_frame_times.data(),
+                         static_cast<int>(kFrameTimeHistory),
+                         1.0,
+                         0.0,
+                         spec);
+        ImPlot::EndPlot();
+    }
 
-    ImGui::SeparatorText("Transient memory");
-    ImGui::Text("Resources: %u textures, %u buffers",
-                statistics.transient_textures,
-                statistics.transient_buffers);
-    ImGui::Text("Aliased: %.2f MB", static_cast<double>(statistics.transient_memory) / kMegabyte);
-    ImGui::Text("Unaliased: %.2f MB",
-                static_cast<double>(statistics.transient_memory_unaliased) / kMegabyte);
-    if (statistics.transient_memory_unaliased)
-        ImGui::Text("Saved: %.1f%%",
-                    100.0 * (1.0 - static_cast<double>(statistics.transient_memory) /
-                                       static_cast<double>(statistics.transient_memory_unaliased)));
-    ImGui::Text("Heap: %.2f MB", static_cast<double>(statistics.heap_size) / kMegabyte);
+    if (ImGui::CollapsingHeader("Render graph", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::Text("Passes: %u executed, %u culled, %u declared",
+                    statistics.executed_passes,
+                    statistics.culled_passes,
+                    statistics.declared_passes);
+        ImGui::Text("Parallel batches: %u", statistics.parallel_batches);
+        ImGui::Text("Barriers: %u", statistics.barriers);
+        ImGui::Text("Transient: %u textures, %u buffers",
+                    statistics.transient_textures,
+                    statistics.transient_buffers);
+        ImGui::Text("Aliased %.2f MB, unaliased %.2f MB, heap %.2f MB",
+                    static_cast<double>(statistics.transient_memory) / kMegabyte,
+                    static_cast<double>(statistics.transient_memory_unaliased) / kMegabyte,
+                    static_cast<double>(statistics.heap_size) / kMegabyte);
+        if (statistics.transient_memory_unaliased)
+            ImGui::Text("Saved by aliasing: %.1f%%",
+                        100.0 * (1.0 - static_cast<double>(statistics.transient_memory) /
+                                           static_cast<double>(
+                                               statistics.transient_memory_unaliased)));
+    }
+
+    std::vector<std::string> step_names(timeline.step_count);
+    std::string culled;
+    for (const auto& pass : timeline.passes)
+    {
+        if (pass.step == UINT32_MAX)
+        {
+            culled += culled.empty() ? pass.name : ", " + pass.name;
+            continue;
+        }
+        auto& name = step_names[pass.step];
+        name += name.empty() ? pass.name : " + " + pass.name;
+    }
+    std::vector<double> step_ticks;
+    std::vector<const char*> step_labels;
+    for (uint32_t step = 0; step < timeline.step_count; ++step)
+    {
+        step_ticks.push_back(step + 0.5);
+        step_labels.push_back(step_names[step].c_str());
+    }
+    std::vector<double> resource_ticks;
+    std::vector<const char*> resource_labels;
+    for (size_t i = 0; i < timeline.resources.size(); ++i)
+    {
+        resource_ticks.push_back(static_cast<double>(i));
+        resource_labels.push_back(timeline.resources[i].name.c_str());
+    }
+
+    if (ImGui::CollapsingHeader("Pass timeline", ImGuiTreeNodeFlags_DefaultOpen) &&
+        timeline.step_count)
+    {
+        const float height = 70.f + 24.f * static_cast<float>(timeline.resources.size());
+        if (ImPlot::BeginPlot("##Lifetimes", ImVec2(kPlotWidth, height), kPlotFlags))
+        {
+            ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_Lock);
+            ImPlot::SetupAxis(ImAxis_Y1,
+                              nullptr,
+                              ImPlotAxisFlags_Lock | ImPlotAxisFlags_Invert |
+                                  ImPlotAxisFlags_NoGridLines);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, timeline.step_count, ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1,
+                                    -0.5,
+                                    std::max<double>(1.0, timeline.resources.size()) - 0.5,
+                                    ImPlotCond_Always);
+            ImPlot::SetupAxisTicks(ImAxis_X1,
+                                   step_ticks.data(),
+                                   static_cast<int>(step_ticks.size()),
+                                   step_labels.data());
+            if (!resource_ticks.empty())
+                ImPlot::SetupAxisTicks(ImAxis_Y1,
+                                       resource_ticks.data(),
+                                       static_cast<int>(resource_ticks.size()),
+                                       resource_labels.data());
+
+            ImPlot::PushPlotClipRect();
+            for (size_t i = 0; i < timeline.resources.size(); ++i)
+            {
+                const auto& resource = timeline.resources[i];
+                DrawPlotRect(resource.first_step,
+                             static_cast<double>(i) - 0.35,
+                             resource.last_step + 1.0,
+                             static_cast<double>(i) + 0.35,
+                             ResourceColor(i));
+            }
+            ImPlot::PopPlotClipRect();
+
+            if (ImPlot::IsPlotHovered())
+            {
+                const ImPlotPoint mouse = ImPlot::GetPlotMousePos();
+                const double row = std::round(mouse.y);
+                if (row >= 0.0 && row < static_cast<double>(timeline.resources.size()))
+                {
+                    const auto& resource = timeline.resources[static_cast<size_t>(row)];
+                    if (mouse.x >= resource.first_step && mouse.x <= resource.last_step + 1.0)
+                        ShowResourceTooltip(resource);
+                }
+            }
+            ImPlot::EndPlot();
+        }
+        if (!culled.empty()) ImGui::TextWrapped("Culled: %s", culled.c_str());
+    }
+
+    if (ImGui::CollapsingHeader("Transient memory layout") && !timeline.resources.empty())
+    {
+        const double heap = static_cast<double>(std::max(statistics.heap_size,
+                                                         statistics.transient_memory)) /
+                            kMegabyte;
+        if (ImPlot::BeginPlot("##Memory", ImVec2(kPlotWidth, 240.f), kPlotFlags))
+        {
+            ImPlot::SetupAxis(ImAxis_X1, nullptr, ImPlotAxisFlags_Lock);
+            ImPlot::SetupAxis(ImAxis_Y1, "MB", ImPlotAxisFlags_Lock | ImPlotAxisFlags_Invert);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, timeline.step_count, ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, std::max(heap, 1.0), ImPlotCond_Always);
+            ImPlot::SetupAxisTicks(ImAxis_X1,
+                                   step_ticks.data(),
+                                   static_cast<int>(step_ticks.size()),
+                                   step_labels.data());
+
+            ImPlot::PushPlotClipRect();
+            for (size_t i = 0; i < timeline.resources.size(); ++i)
+            {
+                const auto& resource = timeline.resources[i];
+                DrawPlotRect(resource.first_step,
+                             static_cast<double>(resource.offset) / kMegabyte,
+                             resource.last_step + 1.0,
+                             static_cast<double>(resource.offset + resource.size) / kMegabyte,
+                             ResourceColor(i));
+            }
+            ImPlot::PopPlotClipRect();
+
+            if (ImPlot::IsPlotHovered())
+            {
+                const ImPlotPoint mouse = ImPlot::GetPlotMousePos();
+                for (const auto& resource : timeline.resources)
+                {
+                    const double begin = static_cast<double>(resource.offset) / kMegabyte;
+                    const double end =
+                        static_cast<double>(resource.offset + resource.size) / kMegabyte;
+                    if (mouse.x < resource.first_step || mouse.x > resource.last_step + 1.0 ||
+                        mouse.y < begin || mouse.y > end)
+                        continue;
+                    ShowResourceTooltip(resource);
+                    break;
+                }
+            }
+            ImPlot::EndPlot();
+        }
+    }
     ImGui::End();
 }

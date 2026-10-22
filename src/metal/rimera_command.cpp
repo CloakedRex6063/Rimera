@@ -96,6 +96,9 @@ void RM::Command::Begin()
     m_root_constants_dirty = true;
     m_arg_offset = 0;
     m_command_allocator->reset();
+    // Debug layer crashes with reusing with stale resources, creating a new one is cheap so just gonna use this
+    auto* native_device = static_cast<MTL::Device*>(m_device->GetNativeHandle());
+    m_command_buffer = NS::TransferPtr(native_device->newCommandBuffer());
     m_command_buffer->beginCommandBuffer(m_command_allocator.get());
 }
 

@@ -904,6 +904,12 @@ void RM::Metal::ConfigureSwapLayer(CA::MetalLayer* swap_layer, bool hdr)
     swap_layer->setWantsExtendedDynamicRangeContent(hdr);
 }
 
+void RM::Metal::UpdateSwapLayerScale(CA::MetalLayer* swap_layer, void* window)
+{
+    auto* ns_window = (__bridge NSWindow*)window;
+    [(__bridge CAMetalLayer*)swap_layer setContentsScale:ns_window.backingScaleFactor];
+}
+
 NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Device>& device, const DeviceCreateInfo& info) {
     auto swap_layer = NS::TransferPtr(CA::MetalLayer::layer());
     auto* ns_window = (NSWindow*)info.window;
@@ -912,6 +918,7 @@ NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Devi
     [ns_view setLayer:(__bridge CAMetalLayer*)swap_layer.get()];
     swap_layer->setDevice(device.get());
     ConfigureSwapLayer(swap_layer.get(), SupportsHDR(info.window));
+    UpdateSwapLayerScale(swap_layer.get(), info.window);
     swap_layer->setFramebufferOnly(false);
     swap_layer->setDrawableSize(CGSizeMake((float)info.width, (float)info.height));
     return swap_layer;

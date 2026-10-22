@@ -227,7 +227,7 @@ int main()
         return 1;
     }
     auto* window = *window_result;
-    auto size = window->GetSize();
+    auto size = window->GetFramebufferSize();
     RM::DeviceCreateInfo create_info{
         .window = window->GetNativeHandle(),
         .width = size.x,
@@ -311,6 +311,21 @@ int main()
         const auto time = std::chrono::steady_clock::now();
         const float delta_time = std::chrono::duration<float>(time - previous_time).count();
         previous_time = time;
+
+        if (window->IsResized())
+        {
+            size = window->GetFramebufferSize();
+            if (size.x && size.y)
+            {
+                if (auto result = device->Resize(size.x, size.y); !result)
+                {
+                    std::cerr << result.error() << '\n';
+                    exit_code = 1;
+                    break;
+                }
+            }
+        }
+        if (!size.x || !size.y) continue;
         
         imgui->NewFrame(delta_time);
         imgui->ShowStatistics(*graph);

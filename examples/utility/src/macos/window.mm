@@ -173,6 +173,16 @@ namespace
         return {static_cast<std::uint32_t>(NSWidth(bounds)),
                 static_cast<std::uint32_t>(NSHeight(bounds))};
     }
+
+    glm::uvec2 GetBackingSize(RimeraWindow* window)
+    {
+        if (window == nil) return {0, 0};
+
+        NSView* view = [window contentView];
+        const NSRect backing = [view convertRectToBacking:[view bounds]];
+        return {static_cast<std::uint32_t>(NSWidth(backing)),
+                static_cast<std::uint32_t>(NSHeight(backing))};
+    }
 }
 
 RM::Result<Window*> Window::Create()
@@ -217,6 +227,8 @@ RM::Result<void> Window::Initialize()
         m_window = window;
         m_running = true;
         m_size = GetWindowSize(window);
+        m_framebuffer_size = GetBackingSize(window);
+        m_content_scale = static_cast<float>([window backingScaleFactor]);
     }
     return {};
 }
@@ -236,12 +248,14 @@ Window::~Window()
 void Window::Tick()
 {
     const auto previous_size = m_size;
+    const auto previous_framebuffer_size = m_framebuffer_size;
     BeginInput();
     auto* window = static_cast<RimeraWindow*>(m_window);
     if (window == nil)
     {
         m_running = false;
         m_size = {0, 0};
+        m_framebuffer_size = {0, 0};
         m_resized = previous_size.x != 0 || previous_size.y != 0;
         return;
     }
@@ -325,8 +339,10 @@ void Window::Tick()
                             static_cast<float>(NSHeight(bounds) - mouse.y)};
         if (![window isKeyWindow]) ClearInput();
         m_size = GetWindowSize(window);
+        m_framebuffer_size = GetBackingSize(window);
+        m_content_scale = static_cast<float>([window backingScaleFactor]);
     }
-    m_resized = m_size.x != previous_size.x || m_size.y != previous_size.y;
+    m_resized = m_size != previous_size || m_framebuffer_size != previous_framebuffer_size;
 }
 
 bool Window::IsResized() const

@@ -56,6 +56,7 @@ namespace RM::Metal
     bool SupportsHDR(void* window);
     DisplayInfo GetDisplayInfo(void* window);
     void ConfigureSwapLayer(CA::MetalLayer* swap_layer, bool hdr);
+    void UpdateSwapLayerScale(CA::MetalLayer* swap_layer, void* window);
     NS::SharedPtr<CA::MetalLayer> CreateSwapLayer(NS::SharedPtr<MTL::Device>& device,
                                                   const DeviceCreateInfo& info);
     MTL::Stages ToBarrierStages(BarrierStage stages);

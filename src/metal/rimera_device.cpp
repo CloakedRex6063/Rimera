@@ -128,8 +128,11 @@ RM::Result<void> RM::Device::Resize(uint32_t width, uint32_t height)
     m_swapchain_textures.clear();
     m_drawable = nullptr;
 
+    m_graphics_queue->RemoveResidencySet(m_swap_layer->residencySet());
     Metal::ConfigureSwapLayer(m_swap_layer.get(), Metal::SupportsHDR(m_window));
+    Metal::UpdateSwapLayerScale(m_swap_layer.get(), m_window);
     m_swap_layer->setDrawableSize(CGSizeMake(width, height));
+    m_graphics_queue->AddResidencySet(m_swap_layer->residencySet());
     return {};
 }
 
