@@ -39,10 +39,6 @@ RM::Result<RM::Queue*> RM::Device::CreateQueue(QueueType type)
 
 void RM::Device::DestroyImmediate(const Queue* queue)
 {
-    if (!queue) return;
-#ifdef RIMERA_DEBUG
-    m_queues.erase(queue->m_id);
-#endif
     delete queue;
 }
 
@@ -79,11 +75,18 @@ void RM::Device::DestroyImmediate(const CommandRing* command_ring) const
 
 RM::Result<RM::ResidencySet*> RM::Device::CreateResidencySet()
 {
-    return CreateObject<ResidencySet>(this);
+    auto result = CreateObject<ResidencySet>(this);
+#ifdef RIMERA_DEBUG
+    if (result) m_residency_sets.insert(*result);
+#endif
+    return result;
 }
 
 void RM::Device::DestroyImmediate(const ResidencySet* residency_set) const
 {
+#ifdef RIMERA_DEBUG
+    if (residency_set) residency_set->ValidateIdle();
+#endif
     delete residency_set;
 }
 
@@ -276,5 +279,19 @@ const RM::Queue* RM::Device::FindQueue(uint64_t id) const
 {
     const auto it = m_queues.find(id);
     return it == m_queues.end() ? nullptr : it->second;
+}
+
+void RM::Device::ValidateLiveObjects() const
+{
+    if (!m_queues.empty())
+        std::fprintf(stderr,
+                     "[Rimera] Error: Device destroyed with %zu live queues. Destroy all queues "
+                     "before the device\n",
+                     m_queues.size());
+    if (!m_residency_sets.empty())
+        std::fprintf(stderr,
+                     "[Rimera] Error: Device destroyed with %zu live residency sets. Destroy all "
+                     "residency sets before the device\n",
+                     m_residency_sets.size());
 }
 #endif

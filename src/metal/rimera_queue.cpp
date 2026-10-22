@@ -38,22 +38,22 @@ RM::Result<void> RM::Queue::Initialize(Device* device, QueueType)
 
 RM::Queue::~Queue()
 {
+#ifdef RIMERA_DEBUG
+    if (m_device) m_device->m_queues.erase(m_id);
+#endif
+    while (!m_residency_sets.empty()) RemoveResidencySet(m_residency_sets.back());
     if (m_fence) m_device->DestroyImmediate(m_fence);
 }
 
-void RM::Queue::AddResidencySet(ResidencySet* residency_set) const
+void RM::Queue::AddResidencySet(ResidencySet* residency_set)
 {
-#ifdef RIMERA_DEBUG
     residency_set->TrackQueue(this);
-#endif
     m_queue->addResidencySet(static_cast<MTL::ResidencySet*>(residency_set->GetNative()));
 }
 
-void RM::Queue::RemoveResidencySet(ResidencySet* residency_set) const
+void RM::Queue::RemoveResidencySet(ResidencySet* residency_set)
 {
-#ifdef RIMERA_DEBUG
     residency_set->UntrackQueue(this);
-#endif
     m_queue->removeResidencySet(static_cast<MTL::ResidencySet*>(residency_set->GetNative()));
 }
 
@@ -71,6 +71,7 @@ void* RM::Queue::GetNativeHandle() const
 
 void RM::Queue::Submit(const Command* command) const
 {
+    for (auto* residency_set : m_residency_sets) residency_set->Commit();
     MTL4::CommandBuffer* buffers[] = {
         static_cast<MTL4::CommandBuffer*>(command->GetNativeCommand())};
     m_queue->commit(buffers, 1);

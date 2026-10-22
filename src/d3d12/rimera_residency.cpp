@@ -1,38 +1,44 @@
 #include "rimera_residency.hpp"
 #include "rimera_device.hpp"
 
-RM::ResidencySet::~ResidencySet()
-{
-    RemoveAllAllocations();
-}
-
 void RM::ResidencySet::AddNativeAllocation(void* native)
 {
-    m_resources.push_back(static_cast<ID3D12Pageable*>(native));
+    auto* pageable = static_cast<ID3D12Pageable*>(native);
+    m_resources.push_back(pageable);
+    if (!m_resident) return;
+    auto* native_device = static_cast<ID3D12Device15*>(m_device->GetNativeHandle());
+    native_device->MakeResident(1, &pageable);
 }
 
 void RM::ResidencySet::RemoveNativeAllocation(void* native)
 {
-    const auto it = std::ranges::find(m_resources, static_cast<ID3D12Pageable*>(native));
-    if (it != m_resources.end()) m_resources.erase(it);
+    auto* pageable = static_cast<ID3D12Pageable*>(native);
+    const auto it = std::ranges::find(m_resources, pageable);
+    if (it == m_resources.end()) return;
+    m_resources.erase(it);
+    if (!m_resident) return;
+    auto* native_device = static_cast<ID3D12Device15*>(m_device->GetNativeHandle());
+    native_device->Evict(1, &pageable);
 }
 
 void RM::ResidencySet::RemoveAllNativeAllocations()
 {
+    if (m_resident) EndNativeResidency();
     m_resources.clear();
 }
 
-void RM::ResidencySet::Commit() const
+void RM::ResidencySet::CommitNative() const
 {
 }
 
-void RM::ResidencySet::RequestResidency() const
+void RM::ResidencySet::RequestNativeResidency() const
 {
+    if (m_resident) return;
     auto* native_device = static_cast<ID3D12Device15*>(m_device->GetNativeHandle());
     native_device->MakeResident(static_cast<uint32_t>(m_resources.size()), m_resources.data());
 }
 
-void RM::ResidencySet::EndResidency() const
+void RM::ResidencySet::EndNativeResidency() const
 {
     auto* native_device = static_cast<ID3D12Device15*>(m_device->GetNativeHandle());
     native_device->Evict(static_cast<uint32_t>(m_resources.size()), m_resources.data());

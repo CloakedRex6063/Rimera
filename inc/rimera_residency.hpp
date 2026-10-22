@@ -57,10 +57,10 @@ namespace RM
         void RemoveAllocation(Heap* heap);
 
         void RemoveAllAllocations();
-        void Commit() const;
+        void Commit();
 
-        void RequestResidency() const;
-        void EndResidency() const;
+        void RequestResidency();
+        void EndResidency();
 
         [[nodiscard]] void* GetNative() const;
 
@@ -71,15 +71,21 @@ namespace RM
         void AddNativeAllocation(void* native);
         void RemoveNativeAllocation(void* native);
         void RemoveAllNativeAllocations();
+        void CommitNative() const;
+        void RequestNativeResidency() const;
+        void EndNativeResidency() const;
+        void TrackQueue(Queue* queue);
+        void UntrackQueue(Queue* queue);
         std::unordered_map<Resident*, void*> m_residents;
+        std::vector<Queue*> m_queues;
+        bool m_resident = false;
+        bool m_dirty = false;
 #ifdef RIMERA_DEBUG
-        void TrackQueue(const Queue* queue);
-        void UntrackQueue(const Queue* queue);
-        std::vector<uint64_t> m_queues;
+        void ValidateIdle() const;
 #endif
 #ifdef RIMERA_MAC
-        void AddAllocation(const MTL::Allocation* allocation) const;
-        void RemoveAllocation(const MTL::Allocation* allocation) const;
+        void AddAllocation(const MTL::Allocation* allocation);
+        void RemoveAllocation(const MTL::Allocation* allocation);
         NS::SharedPtr<MTL::ResidencySet> m_residency_set;
 #elifdef RIMERA_WINDOWS
         std::vector<ID3D12Pageable*> m_resources;

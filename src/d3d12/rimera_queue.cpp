@@ -38,22 +38,22 @@ RM::Result<void> RM::Fence::Initialize(Device* device)
 
 RM::Queue::~Queue()
 {
+#ifdef RIMERA_DEBUG
+    if (m_device) m_device->m_queues.erase(m_id);
+#endif
+    while (!m_residency_sets.empty()) RemoveResidencySet(m_residency_sets.back());
     if (m_fence) m_device->DestroyImmediate(m_fence);
     m_queue.Reset();
 }
 
-void RM::Queue::AddResidencySet([[maybe_unused]] ResidencySet* residency_set) const
+void RM::Queue::AddResidencySet(ResidencySet* residency_set)
 {
-#ifdef RIMERA_DEBUG
     residency_set->TrackQueue(this);
-#endif
 }
 
-void RM::Queue::RemoveResidencySet([[maybe_unused]] ResidencySet* residency_set) const
+void RM::Queue::RemoveResidencySet(ResidencySet* residency_set)
 {
-#ifdef RIMERA_DEBUG
     residency_set->UntrackQueue(this);
-#endif
 }
 
 RM::Result<void> RM::Queue::Signal(Fence* fence, uint64_t value) const
@@ -67,6 +67,7 @@ RM::Result<void> RM::Queue::Signal(Fence* fence, uint64_t value) const
 
 void RM::Queue::Submit(const Command* command) const
 {
+    for (auto* residency_set : m_residency_sets) residency_set->Commit();
     auto* native_command = static_cast<ID3D12CommandList*>(command->GetNativeCommand());
     m_queue->ExecuteCommandLists(1, &native_command);
     static_cast<void>(Signal(m_fence));

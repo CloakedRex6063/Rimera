@@ -54,12 +54,10 @@ RM::Device::~Device()
     if (m_upload_fence) DestroyImmediate(m_upload_fence);
     if (m_frame_fence) DestroyImmediate(m_frame_fence);
     for (auto [format, pipeline] : m_blit_pipelines) DestroyImmediate(pipeline);
-    if (m_core_residency_set)
-    {
-        m_core_residency_set->RemoveAllAllocations();
-        m_core_residency_set->EndResidency();
-        delete m_core_residency_set;
-    }
+    DestroyImmediate(m_core_residency_set);
+#ifdef RIMERA_DEBUG
+    ValidateLiveObjects();
+#endif
     if (m_root_sig) IRRootSignatureDestroy(m_root_sig);
 }
 

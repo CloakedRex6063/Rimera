@@ -1,5 +1,6 @@
 #pragma once
 #include "unordered_map"
+#include "unordered_set"
 #include "rimera_buffer.hpp"
 #include "rimera_heap.hpp"
 #include "rimera_structs.hpp"
@@ -154,7 +155,9 @@ namespace RM
         uint64_t m_queue_id = 0;
 #ifdef RIMERA_DEBUG
         [[nodiscard]] const Queue* FindQueue(uint64_t id) const;
+        void ValidateLiveObjects() const;
         std::unordered_map<uint64_t, const Queue*> m_queues;
+        std::unordered_set<const ResidencySet*> m_residency_sets;
 #endif
         Queue* m_upload_queue = nullptr;
         Command* m_upload_command = nullptr;

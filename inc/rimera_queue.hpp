@@ -38,8 +38,8 @@ namespace RM
         Queue& operator=(const Queue&) = delete;
         ~Queue();
 
-        void AddResidencySet(ResidencySet* residency_set) const;
-        void RemoveResidencySet(ResidencySet* residency_set) const;
+        void AddResidencySet(ResidencySet* residency_set);
+        void RemoveResidencySet(ResidencySet* residency_set);
         [[nodiscard]] Result<void> WaitIdle() const;
         [[nodiscard]] Result<void> Signal(Fence* fence, uint64_t value) const;
         [[nodiscard]] Result<uint64_t> Signal(Fence* fence) const;
@@ -66,5 +66,6 @@ namespace RM
         Device* m_device = nullptr;
         Fence* m_fence = nullptr;
         uint64_t m_id = 0;
+        std::vector<ResidencySet*> m_residency_sets;
     };
 } // namespace RM

@@ -10,7 +10,6 @@ void RM::Resident::ReleaseResidency()
     {
         auto* residency_set = m_residency_sets.back();
         residency_set->RemoveResident(this);
-        residency_set->Commit();
     }
 }
 
@@ -38,6 +37,37 @@ void RM::Resident::ValidateIdle(std::string_view type) const
     }
 }
 #endif
+
+RM::ResidencySet::~ResidencySet()
+{
+#ifdef RIMERA_DEBUG
+    if (m_device) m_device->m_residency_sets.erase(this);
+#endif
+    while (!m_queues.empty()) m_queues.back()->RemoveResidencySet(this);
+    EndResidency();
+    RemoveAllAllocations();
+}
+
+void RM::ResidencySet::Commit()
+{
+    if (!m_dirty) return;
+    CommitNative();
+    m_dirty = false;
+}
+
+void RM::ResidencySet::RequestResidency()
+{
+    Commit();
+    RequestNativeResidency();
+    m_resident = true;
+}
+
+void RM::ResidencySet::EndResidency()
+{
+    if (!m_resident) return;
+    EndNativeResidency();
+    m_resident = false;
+}
 
 void RM::ResidencySet::AddAllocation(Texture* resource)
 {
@@ -74,6 +104,7 @@ void RM::ResidencySet::RemoveAllAllocations()
     for (const auto& [resident, native] : m_residents) std::erase(resident->m_residency_sets, this);
     m_residents.clear();
     RemoveAllNativeAllocations();
+    m_dirty = true;
 }
 
 void RM::ResidencySet::AddResident(Resident* resident, void* native)
@@ -81,9 +112,9 @@ void RM::ResidencySet::AddResident(Resident* resident, void* native)
     if (!m_residents.emplace(resident, native).second) return;
     resident->m_residency_sets.push_back(this);
     AddNativeAllocation(native);
+    m_dirty = true;
 #ifdef RIMERA_DEBUG
-    for (const auto id : m_queues)
-        if (const auto* queue = m_device->FindQueue(id)) resident->TrackQueue(queue);
+    for (const auto* queue : m_queues) resident->TrackQueue(queue);
 #endif
 }
 
@@ -94,18 +125,33 @@ void RM::ResidencySet::RemoveResident(Resident* resident)
     RemoveNativeAllocation(it->second);
     std::erase(resident->m_residency_sets, this);
     m_residents.erase(it);
+    m_dirty = true;
+}
+
+void RM::ResidencySet::TrackQueue(Queue* queue)
+{
+    if (std::ranges::contains(m_queues, queue)) return;
+    m_queues.push_back(queue);
+    queue->m_residency_sets.push_back(this);
+#ifdef RIMERA_DEBUG
+    for (const auto& [resident, native] : m_residents) resident->TrackQueue(queue);
+#endif
+}
+
+void RM::ResidencySet::UntrackQueue(Queue* queue)
+{
+    std::erase(m_queues, queue);
+    std::erase(queue->m_residency_sets, this);
 }
 
 #ifdef RIMERA_DEBUG
-void RM::ResidencySet::TrackQueue(const Queue* queue)
+void RM::ResidencySet::ValidateIdle() const
 {
-    if (std::ranges::contains(m_queues, queue->m_id)) return;
-    m_queues.push_back(queue->m_id);
-    for (const auto& [resident, native] : m_residents) resident->TrackQueue(queue);
-}
-
-void RM::ResidencySet::UntrackQueue(const Queue* queue)
-{
-    std::erase(m_queues, queue->m_id);
+    if (!std::ranges::any_of(m_queues, [](const Queue* queue) { return queue->IsBusySince(0); }))
+        return;
+    std::fprintf(stderr,
+                 "[Rimera] Error: ResidencySet destroyed while still in use by a queue. Prefer "
+                 "Device::Retire, or wait for the GPU work to finish before calling "
+                 "DestroyImmediate\n");
 }
 #endif
