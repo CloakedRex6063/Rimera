@@ -911,7 +911,7 @@ void RM::Metal::UpdateSwapLayerScale(CA::MetalLayer* swap_layer, void* window)
 }
 
 NS::SharedPtr<CA::MetalLayer> RM::Metal::CreateSwapLayer(NS::SharedPtr<MTL::Device>& device, const SwapchainCreateInfo& info) {
-    auto swap_layer = NS::TransferPtr(CA::MetalLayer::layer());
+    auto swap_layer = NS::RetainPtr(CA::MetalLayer::layer());
     auto* ns_window = (NSWindow*)info.window;
     NSView* ns_view = [ns_window contentView];
     [ns_view setWantsLayer:YES];

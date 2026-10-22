@@ -22,8 +22,5 @@ target_sources(Utility PRIVATE
 add_subdirectory(external)
 
 if(APPLE)
-    set_target_properties(Utility PROPERTIES OBJCXX_STANDARD 23)
-    target_sources(Utility PRIVATE src/macos/window.mm)
-elseif(WIN32)
-    target_sources(Utility PRIVATE src/windows/window.cpp)
+    target_link_libraries(Utility PRIVATE "-framework CoreServices")
 endif()

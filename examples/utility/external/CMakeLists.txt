@@ -40,10 +40,25 @@ add_library(mikktspace STATIC ${mikktspace_SOURCE_DIR}/mikktspace.c)
 target_include_directories(mikktspace PUBLIC ${mikktspace_SOURCE_DIR})
 target_link_libraries(Utility PUBLIC mikktspace)
 
+if (APPLE)
+    enable_language(OBJC)
+endif ()
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+        GLFW
+        GIT_REPOSITORY https://github.com/glfw/glfw
+        GIT_TAG 3.4
+)
+FetchContent_MakeAvailable(GLFW)
+target_link_libraries(Utility PUBLIC glfw)
+
 FetchContent_Declare(
         ImGui
         GIT_REPOSITORY https://github.com/ocornut/imgui
-        GIT_TAG v1.91.9b
+        GIT_TAG v1.91.9b-docking
 )
 FetchContent_MakeAvailable(ImGui)
 add_library(imgui STATIC
@@ -51,8 +66,10 @@ add_library(imgui STATIC
         ${imgui_SOURCE_DIR}/imgui_demo.cpp
         ${imgui_SOURCE_DIR}/imgui_draw.cpp
         ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp)
-target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR})
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp)
+target_include_directories(imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC glfw)
 target_link_libraries(Utility PUBLIC imgui)
 
 FetchContent_Declare(

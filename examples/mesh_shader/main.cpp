@@ -111,8 +111,8 @@ struct MeshShaderScene
         std::vector<Transform> transforms;
         transforms.reserve(model->GetNodes().size());
         for (const auto& node : model->GetNodes())
-            transforms.push_back({node.world_transform,
-                                  glm::transpose(glm::inverse(node.world_transform))});
+            transforms.push_back({.world = node.world_transform,
+                                  .normal = glm::transpose(glm::inverse(node.world_transform))});
         std::vector<DrawData> draw_data;
         auto visit_result = model->ForEachMeshlet(
             [&](const Mesh& mesh, uint32_t meshlet, uint32_t node_index) -> RM::Result<void>
@@ -308,7 +308,7 @@ int main()
     auto previous_time = std::chrono::steady_clock::now();
 
     ImGuiLayer* imgui;
-    auto result_imgui = ImGuiLayer::Create(device, window, MeshShaderScene::kColorFormat);
+    auto result_imgui = ImGuiLayer::Create(device, queue, window, MeshShaderScene::kColorFormat);
     if (!result_imgui)
     {
         std::cerr << result_imgui.error() << '\n';
@@ -316,12 +316,12 @@ int main()
         return exit_code;
     }
     imgui = result_imgui.value();
-    
+
     while (window->IsRunning())
     {
         window->Tick();
         if (!window->IsRunning()) break;
-        
+
         const auto time = std::chrono::steady_clock::now();
         const float delta_time = std::chrono::duration<float>(time - previous_time).count();
         previous_time = time;
@@ -340,16 +340,16 @@ int main()
             }
         }
         if (!size.x || !size.y) continue;
-        
+
         imgui->NewFrame(delta_time);
         imgui->ShowStatistics(*graph);
-        if (!imgui->WantsMouse()) camera.Update(*window, delta_time);
+        if (!imgui->WantsMouse() && !imgui->WantsKeyboard()) camera.Update(*window, delta_time);
 
-        if (window->IsKeyPressed(Key::Tab))
+        if (!imgui->WantsKeyboard() && window->IsKeyPressed(Key::Tab))
             camera.SetMode(camera.GetMode() == CameraMode::Orbit
                                ? CameraMode::Fly
                                : CameraMode::Orbit);
-        
+
         const glm::mat4 view_projection = camera.GetViewProjection();
         const RM::DisplayInfo display_info = swapchain->GetDisplayInfo();
         imgui->SetDisplayInfo(display_info);
@@ -443,6 +443,7 @@ int main()
             exit_code = 1;
             break;
         }
+        imgui->Present();
 
         command_ring->Next();
     }
