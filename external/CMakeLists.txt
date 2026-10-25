@@ -79,14 +79,20 @@ function(copy_runtime_dlls target)
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_FILE_DIR:${target}>/D3D12"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "$<TARGET_FILE:DXC::Compiler>"
                 "${D3D12_RUNTIME_DIR}/D3D12Core.dll"
                 "${D3D12_RUNTIME_DIR}/d3d12SDKLayers.dll"
                 "${D3D12_RUNTIME_DIR}/D3D12StateObjectCompiler.dll"
                 "$<TARGET_FILE_DIR:${target}>/D3D12"
                 VERBATIM
         )
+        add_custom_target(copy_runtime_dxcompiler_${target}
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:DXC::Compiler>"
+                "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM
+        )
         add_dependencies(${target} copy_runtime_${target})
+        add_dependencies(${target} copy_runtime_dxcompiler_${target})
     elseif (RIMERA_BACKEND STREQUAL "Metal")
         get_filename_component(METAL_IRCONVERTER_LIBRARY_DIR "${METAL_IRCONVERTER_LIBRARY}" DIRECTORY)
         set_target_properties(${target} PROPERTIES

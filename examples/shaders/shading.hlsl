@@ -31,10 +31,10 @@ void CSMain(uint2 id : SV_DispatchThreadID)
     uint draw_id = vis_id >> 7;
     uint primitive = vis_id & 127;
     
-    StructuredBuffer<DrawData> draws = ResourceDescriptorHeap[draw_buffer_index];
-    DrawData draw = draws.Load(draw_id); 
-    StructuredBuffer<Material> materials = ResourceDescriptorHeap[material_buffer_index];
-    Material material = materials[draw.material_index];
+    ByteAddressBuffer draws = ResourceDescriptorHeap[draw_buffer_index];
+    DrawData draw = LoadElement<DrawData>(draws, draw_id);
+    ByteAddressBuffer materials = ResourceDescriptorHeap[material_buffer_index];
+    Material material = LoadElement<Material>(materials, draw.material_index);
     
     float4 albedo = material.base_color * SampleBaseColorTexture(material, uv, gradients.xy, gradients.zw);
     

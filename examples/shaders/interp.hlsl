@@ -33,66 +33,67 @@ void CSMain(uint2 id : SV_DispatchThreadID)
     uint draw_id = vis_id >> 7;
     uint primitive = vis_id & 127;
     
-    StructuredBuffer<DrawData> draws = ResourceDescriptorHeap[draw_buffer_index];
-    DrawData draw = draws.Load(draw_id);
+    ByteAddressBuffer draws = ResourceDescriptorHeap[draw_buffer_index];
+    DrawData draw = LoadElement<DrawData>(draws, draw_id);
 
     ByteAddressBuffer triangles =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.triangle_index)];
 
-    StructuredBuffer<Meshlet> meshlets =
+    ByteAddressBuffer meshlets =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.meshlet_buffer_index)];
-    Meshlet meshlet = meshlets.Load(draw.meshlet_index);
+    Meshlet meshlet = LoadElement<Meshlet>(meshlets, draw.meshlet_index);
 
-    StructuredBuffer<uint> vertex_indices =
+    ByteAddressBuffer vertex_indices =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.vertex_indices_index)];
-        
-    StructuredBuffer<float3> positions =
+
+    ByteAddressBuffer positions =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.position_index)];
-    StructuredBuffer<uint> normals =
+    ByteAddressBuffer normals =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.normal_index)];
-    StructuredBuffer<uint> uvs = ResourceDescriptorHeap[NonUniformResourceIndex(draw.uv_index)];
-    StructuredBuffer<uint> tangents =
+    ByteAddressBuffer uvs = ResourceDescriptorHeap[NonUniformResourceIndex(draw.uv_index)];
+    ByteAddressBuffer tangents =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.tangent_index)];
-        
+
     uint offset = meshlet.triangle_offset + primitive * 3;
     uint index0 = LoadByte(triangles, offset);
     uint index1 = LoadByte(triangles, offset + 1);
     uint index2 = LoadByte(triangles, offset + 2);
-    
-    uint v0 = vertex_indices[meshlet.vertex_offset + index0];
-    uint v1 = vertex_indices[meshlet.vertex_offset + index1];
-    uint v2 = vertex_indices[meshlet.vertex_offset + index2];
-    
-    StructuredBuffer<Transform> transforms = ResourceDescriptorHeap[NonUniformResourceIndex(transform_buffer_index)];
-    float4x4 mvp = mul(view_projection, transforms[draw.transform_index].world);
-    
-    float4 pos0 = mul(mvp, float4(positions[v0], 1.f));
-    float4 pos1 = mul(mvp, float4(positions[v1], 1.f));
-    float4 pos2 = mul(mvp, float4(positions[v2], 1.f));
+
+    uint v0 = LoadElement<uint>(vertex_indices, meshlet.vertex_offset + index0);
+    uint v1 = LoadElement<uint>(vertex_indices, meshlet.vertex_offset + index1);
+    uint v2 = LoadElement<uint>(vertex_indices, meshlet.vertex_offset + index2);
+
+    ByteAddressBuffer transforms = ResourceDescriptorHeap[NonUniformResourceIndex(transform_buffer_index)];
+    Transform transform = LoadElement<Transform>(transforms, draw.transform_index);
+    float4x4 mvp = mul(view_projection, transform.world);
+
+    float4 pos0 = mul(mvp, float4(LoadElement<float3>(positions, v0), 1.f));
+    float4 pos1 = mul(mvp, float4(LoadElement<float3>(positions, v1), 1.f));
+    float4 pos2 = mul(mvp, float4(LoadElement<float3>(positions, v2), 1.f));
     
     float2 pixel_ndc = (float2(id.xy) + 0.5) / float2(size) * 2.0 - 1.0;
     pixel_ndc.y = -pixel_ndc.y;
     
     BarycentricDeriv bary_coords = CalcFullBary(pos0, pos1, pos2, pixel_ndc, float2(size)); 
     
-    float2 uv0 = UnpackUV(uvs[v0]);
-    float2 uv1 = UnpackUV(uvs[v1]);
-    float2 uv2 = UnpackUV(uvs[v2]);
+    float2 uv0 = UnpackUV(LoadElement<uint>(uvs, v0));
+    float2 uv1 = UnpackUV(LoadElement<uint>(uvs, v1));
+    float2 uv2 = UnpackUV(LoadElement<uint>(uvs, v2));
     InterpResult2D uv_interp = InterpolateWithDeriv(bary_coords, uv0, uv1, uv2);
     uint packed_uv = PackUV(uv_interp.interp);
     
-    float3 normal0 = UnpackDirection10(normals[v0]);
-    float3 normal1 = UnpackDirection10(normals[v1]);
-    float3 normal2 = UnpackDirection10(normals[v2]);
+    float3 normal0 = UnpackDirection10(LoadElement<uint>(normals, v0));
+    float3 normal1 = UnpackDirection10(LoadElement<uint>(normals, v1));
+    float3 normal2 = UnpackDirection10(LoadElement<uint>(normals, v2));
     InterpResult3D normal_interp = InterpolateWithDeriv(bary_coords, normal0, normal1, normal2);
-    float3x3 normal_3x3 = (float3x3)transforms[draw.transform_index].normal;
+    float3x3 normal_3x3 = (float3x3)transform.normal;
     float3 normal_ws = normalize(mul(normal_3x3, normal_interp.interp));
     
-    float4 tangent0 = UnpackTangent(tangents[v0]);
-    float4 tangent1 = UnpackTangent(tangents[v1]);
-    float4 tangent2 = UnpackTangent(tangents[v2]);
+    float4 tangent0 = UnpackTangent(LoadElement<uint>(tangents, v0));
+    float4 tangent1 = UnpackTangent(LoadElement<uint>(tangents, v1));
+    float4 tangent2 = UnpackTangent(LoadElement<uint>(tangents, v2));
     InterpResult3D tangent_interp = InterpolateWithDeriv(bary_coords, tangent0.xyz, tangent1.xyz, tangent2.xyz);
-    float3x3 world_3x3 = (float3x3)transforms[draw.transform_index].world;        
+    float3x3 world_3x3 = (float3x3)transform.world;
     float3 tangent_ws = mul(world_3x3, tangent_interp.interp);
     tangent_ws = normalize(tangent_ws - normal_ws * dot(normal_ws, tangent_ws));
     float handedness = tangent0.w * (determinant(world_3x3) < 0.0 ? -1.0 : 1.0);

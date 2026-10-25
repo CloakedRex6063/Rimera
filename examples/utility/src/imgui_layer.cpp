@@ -48,6 +48,12 @@ namespace
             float4 color : COLOR0;
         };
 
+        template <typename T>
+        T LoadElement(ByteAddressBuffer buffer, uint index)
+        {
+            return buffer.Load<T>(index * sizeof(T));
+        }
+
         float3 SrgbToLinear(float3 color)
         {
             return select(color <= 0.04045, color / 12.92, pow((color + 0.055) / 1.055, 2.4));
@@ -55,8 +61,8 @@ namespace
 
         VSOut VSMain(uint vertex_id : SV_VertexID)
         {
-            StructuredBuffer<ImGuiVertex> vertices = ResourceDescriptorHeap[vertex_buffer_index];
-            ImGuiVertex vertex = vertices.Load(vertex_id + vertex_offset);
+            ByteAddressBuffer vertices = ResourceDescriptorHeap[vertex_buffer_index];
+            ImGuiVertex vertex = LoadElement<ImGuiVertex>(vertices, vertex_id + vertex_offset);
             VSOut output;
             output.position = float4(vertex.position * scale + translate, 0.0, 1.0);
             output.uv = vertex.uv;

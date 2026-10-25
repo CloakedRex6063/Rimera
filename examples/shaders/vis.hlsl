@@ -15,25 +15,26 @@ void MSMain(uint group_index : SV_GroupIndex,
             out indices uint3 triangles_out[124],
             out primitives PrimOut prims[124])
 {
-    StructuredBuffer<DrawData> draws = ResourceDescriptorHeap[draw_buffer_index];
-    DrawData draw = draws.Load(group_id.x);
-    StructuredBuffer<Meshlet> meshlets =
+    ByteAddressBuffer draws = ResourceDescriptorHeap[draw_buffer_index];
+    DrawData draw = LoadElement<DrawData>(draws, group_id.x);
+    ByteAddressBuffer meshlets =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.meshlet_buffer_index)];
-    Meshlet meshlet = meshlets.Load(draw.meshlet_index);
+    Meshlet meshlet = LoadElement<Meshlet>(meshlets, draw.meshlet_index);
     SetMeshOutputCounts(meshlet.vertex_count, meshlet.triangle_count);
 
-    StructuredBuffer<float3> positions =
+    ByteAddressBuffer positions =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.position_index)];
-    StructuredBuffer<uint> vertex_indices =
+    ByteAddressBuffer vertex_indices =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.vertex_indices_index)];
     ByteAddressBuffer triangles =
         ResourceDescriptorHeap[NonUniformResourceIndex(draw.triangle_index)];
-    StructuredBuffer<Transform> transforms = ResourceDescriptorHeap[transform_buffer_index];
-    Transform transform = transforms.Load(draw.transform_index);
+    ByteAddressBuffer transforms = ResourceDescriptorHeap[transform_buffer_index];
+    Transform transform = LoadElement<Transform>(transforms, draw.transform_index);
 
     if (group_index < meshlet.vertex_count)
     {
-        float3 position = positions.Load(vertex_indices.Load(meshlet.vertex_offset + group_index));
+        float3 position = LoadElement<float3>(
+            positions, LoadElement<uint>(vertex_indices, meshlet.vertex_offset + group_index));
         MeshOutput output;
         output.position = mul(view_projection, mul(transform.world, float4(position, 1)));
         vertices_out[group_index] = output;

@@ -65,6 +65,12 @@ cbuffer Scene : register(b0)
     column_major float4x4 view_projection;
 }
 
+template <typename T>
+T LoadElement(ByteAddressBuffer buffer, uint index)
+{
+    return buffer.Load<T>(index * sizeof(T));
+}
+
 uint LoadByte(ByteAddressBuffer buffer, uint offset)
 {
     return (buffer.Load(offset & ~3u) >> ((offset & 3u) * 8u)) & 0xffu;
@@ -164,8 +170,8 @@ TangentFrame UnpackTangentFrame(uint4 packed)
 
 uint GetTextureDescriptor(Material material, uint slot)
 {
-    StructuredBuffer<uint> texture_table = ResourceDescriptorHeap[texture_buffer_index];
-    return texture_table[material.textures[slot]];
+    ByteAddressBuffer texture_table = ResourceDescriptorHeap[texture_buffer_index];
+    return LoadElement<uint>(texture_table, material.textures[slot]);
 }
 
 float4 SampleBaseColorTexture(Material material, float2 uv, float2 uv_dx, float2 uv_dy)

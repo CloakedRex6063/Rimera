@@ -188,7 +188,7 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
     }
     if (!m_upload_command)
     {
-        auto command = CreateCommand(CommandType::Graphics);
+        auto command = CreateCommand(CommandType::Transfer);
         if (!command) return std::unexpected(command.error());
         m_upload_command = *command;
     }

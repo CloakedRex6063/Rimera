@@ -192,19 +192,35 @@ RM::Result<uint32_t> RM::Device::AddDescriptor(const Buffer* buffer)
     }
     auto cpu_handle = m_srv_heap.cpu_base;
     cpu_handle.ptr += index * m_srv_heap.stride;
-    D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc
+    auto* resource = static_cast<ID3D12Resource*>(buffer->GetNativeHandle());
+    if (buffer->m_flags & BufferFlags::eUnorderedAccess)
     {
-        .Format = DXGI_FORMAT_UNKNOWN,
-        .ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc
+        {
+            .Format = DXGI_FORMAT_R32_TYPELESS,
+            .ViewDimension = D3D12_UAV_DIMENSION_BUFFER,
+            .Buffer = {
+                .FirstElement = 0,
+                .NumElements = buffer->GetLength() / 4,
+                .StructureByteStride = 0,
+                .Flags = D3D12_BUFFER_UAV_FLAG_RAW
+            },
+        };
+        m_device->CreateUnorderedAccessView(resource, nullptr, &uav_desc, cpu_handle);
+        return index;
+    }
+    const D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc{
+        .Format = DXGI_FORMAT_R32_TYPELESS,
+        .ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+        .Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
         .Buffer = {
             .FirstElement = 0,
-            .NumElements = 1,
-            .StructureByteStride = sizeof(buffer->GetLength()),
-            .Flags = D3D12_BUFFER_UAV_FLAG_NONE
+            .NumElements = buffer->GetLength() / 4,
+            .StructureByteStride = 0,
+            .Flags = D3D12_BUFFER_SRV_FLAG_RAW,
         },
     };
-    auto* resource = static_cast<ID3D12Resource*>(buffer->GetNativeHandle());
-    m_device->CreateUnorderedAccessView(resource, nullptr, &uav_desc, cpu_handle);
+    m_device->CreateShaderResourceView(resource, &srv_desc, cpu_handle);
     return index;
 }
 
