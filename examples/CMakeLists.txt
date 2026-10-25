@@ -4,7 +4,8 @@ file(GLOB_RECURSE RIMERA_ASSET_FILES
 
 file(GLOB_RECURSE RIMERA_SHADER_FILES
         CONFIGURE_DEPENDS
-        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*)
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsl
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsli)
 
 function(copy_assets dest)
     if (APPLE)
@@ -23,6 +24,12 @@ function(copy_assets dest)
             "${shader_destination}"
             VERBATIM)
     set_property(TARGET ${dest} APPEND PROPERTY LINK_DEPENDS ${RIMERA_SHADER_FILES})
+    
+    target_sources(${dest} PRIVATE ${RIMERA_SHADER_FILES})
+    set_source_files_properties(${RIMERA_SHADER_FILES}
+            TARGET_DIRECTORY ${dest}
+            PROPERTIES HEADER_FILE_ONLY TRUE)
+    source_group(TREE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/shaders" PREFIX "Shaders" FILES ${RIMERA_SHADER_FILES})
 endfunction()
 
 function(create_example name)

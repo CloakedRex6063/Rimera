@@ -21,6 +21,7 @@ add_library(Rimera STATIC
         inc/rimera_as.hpp
         inc/rimera_buffer.hpp
         inc/rimera_command.hpp
+        inc/rimera_compiler.hpp
         inc/rimera_device.hpp
         inc/rimera_enum_flags.hpp
         inc/rimera_helpers.hpp
@@ -29,6 +30,7 @@ add_library(Rimera STATIC
         inc/rimera_shader.hpp
         inc/rimera_structs.hpp
         inc/rimera_texture.hpp
+        src/rimera_compiler.cpp
         src/rimera_helpers.cpp
         src/rimera_texture_common.cpp
         inc/rimera_builders.hpp

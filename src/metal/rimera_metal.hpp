@@ -24,7 +24,7 @@ namespace RM::Metal
     };
 
     [[nodiscard]] Result<CompiledShader> CompileShader(Device* device,
-                                                       const ShaderCreateInfo& info,
+                                                       const Shader* shader,
                                                        ShaderType type);
 
     [[nodiscard]] Result<MTL::BlendFactor> ToBlendFactor(BlendFactor factor);

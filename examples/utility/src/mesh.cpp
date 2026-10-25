@@ -95,9 +95,29 @@ RM::Result<void> Mesh::Initialize(RM::Device* device,
     vertex_indices.resize(last.vertex_offset + last.vertex_count);
     triangles.resize(last.triangle_offset + last.triangle_count * 3);
     triangles.resize((triangles.size() + 3) & ~size_t{3});
-    auto vertex_buffer_result = Upload(optimized.data(), optimized.size() * sizeof(Vertex));
-    if (!vertex_buffer_result) return std::unexpected(vertex_buffer_result.error());
-    m_vertex_buffer = std::move(*vertex_buffer_result);
+    std::vector<glm::vec3> positions(count);
+    std::vector<uint32_t> normals(count);
+    std::vector<uint32_t> uvs(count);
+    std::vector<uint32_t> tangents(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        positions[i] = optimized[i].position;
+        normals[i] = optimized[i].normal;
+        uvs[i] = optimized[i].uv;
+        tangents[i] = optimized[i].tangent;
+    }
+    auto position_buffer_result = Upload(positions.data(), positions.size() * sizeof(glm::vec3));
+    if (!position_buffer_result) return std::unexpected(position_buffer_result.error());
+    m_position_buffer = std::move(*position_buffer_result);
+    auto normal_buffer_result = Upload(normals.data(), normals.size() * sizeof(uint32_t));
+    if (!normal_buffer_result) return std::unexpected(normal_buffer_result.error());
+    m_normal_buffer = std::move(*normal_buffer_result);
+    auto uv_buffer_result = Upload(uvs.data(), uvs.size() * sizeof(uint32_t));
+    if (!uv_buffer_result) return std::unexpected(uv_buffer_result.error());
+    m_uv_buffer = std::move(*uv_buffer_result);
+    auto tangent_buffer_result = Upload(tangents.data(), tangents.size() * sizeof(uint32_t));
+    if (!tangent_buffer_result) return std::unexpected(tangent_buffer_result.error());
+    m_tangent_buffer = std::move(*tangent_buffer_result);
     auto vertex_index_buffer_result =
         Upload(vertex_indices.data(), vertex_indices.size() * sizeof(unsigned int));
     if (!vertex_index_buffer_result) return std::unexpected(vertex_index_buffer_result.error());
@@ -141,7 +161,10 @@ RM::Result<RM::Buffer*> Mesh::GenerateIndexBuffer() const
 Mesh::~Mesh()
 {
     if (!m_device) return;
-    m_device->DestroyImmediate(m_vertex_buffer);
+    m_device->DestroyImmediate(m_position_buffer);
+    m_device->DestroyImmediate(m_normal_buffer);
+    m_device->DestroyImmediate(m_uv_buffer);
+    m_device->DestroyImmediate(m_tangent_buffer);
     m_device->DestroyImmediate(m_vertex_index_buffer);
     m_device->DestroyImmediate(m_triangle_buffer);
     m_device->DestroyImmediate(m_meshlet_buffer);

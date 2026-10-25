@@ -137,6 +137,8 @@ private:
     ImPlotContext* m_plot_context = nullptr;
     bool m_platform_initialized = false;
     std::unordered_map<RM::Format, RM::Pipeline*> m_pipelines;
+    RM::Shader* m_vertex_shader = nullptr;
+    RM::Shader* m_fragment_shader = nullptr;
     RM::Sampler* m_sampler = nullptr;
     RM::Texture* m_font_texture = nullptr;
     float m_font_scale = 0.f;

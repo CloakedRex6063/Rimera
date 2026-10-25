@@ -283,7 +283,7 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const MeshGraphicsPipe
         MTL::Size(m_mesh_dispatch_group.x, m_mesh_dispatch_group.y, m_mesh_dispatch_group.z));
 
     m_ampl_dispatch_group = {.x = 1, .y = 1, .z = 1};
-    if (!info.ampl_shader.code.empty())
+    if (info.ampl_shader)
     {
         auto result_ampl_shader =
             Metal::CompileShader(device, info.ampl_shader, ShaderType::Amplification);

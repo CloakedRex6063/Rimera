@@ -22,22 +22,14 @@ using namespace Microsoft::WRL;
 #include "rimera_texture.hpp"
 #include "rimera_helpers.hpp"
 
-RM::Result<ComPtr<IDxcBlob>> RM::D3D12::CompileShader(const ShaderCreateInfo& shader,
-                                                        ShaderType type)
+RM::Result<D3D12_SHADER_BYTECODE> RM::D3D12::GetShaderBytecode(const Shader* shader,
+                                                                ShaderType type)
 {
-    const std::string entry(shader.entry_point.empty() ? "main" : shader.entry_point);
-    auto result = Helpers::CompileHlsl(shader.code, entry, type);
-    if (!result) return std::unexpected(result.error());
-    ComPtr<IDxcBlob> blob;
-    blob.Attach(*result);
-    return blob;
-}
-
-D3D12_SHADER_BYTECODE RM::D3D12::GetShaderBytecode(const ComPtr<IDxcBlob>& blob)
-{
-    return blob ? D3D12_SHADER_BYTECODE{.pShaderBytecode = blob->GetBufferPointer(),
-                                       .BytecodeLength = blob->GetBufferSize()}
-                : D3D12_SHADER_BYTECODE{};
+    if (!shader) return std::unexpected("Pipeline requires a compiled shader");
+    if (shader->GetType() != type)
+        return std::unexpected("Compiled shader does not match the pipeline stage");
+    return D3D12_SHADER_BYTECODE{.pShaderBytecode = shader->GetBytecode(),
+                                 .BytecodeLength = shader->GetBytecodeSize()};
 }
 
 #ifdef RIMERA_DEBUG

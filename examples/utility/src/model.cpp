@@ -129,7 +129,7 @@ struct Model::SourceVertex
     float position[3]{};
     float normal[3]{};
     float tangent[4]{1, 0, 0, 1};
-    float uv[2][2]{};
+    float uv[2]{};
 };
 
 RM::Result<void> Model::ValidateVertex(const SourceVertex& vertex)
@@ -143,17 +143,13 @@ RM::Result<void> Model::ValidateVertex(const SourceVertex& vertex)
     if (auto result = finite(vertex.position); !result) return std::unexpected(result.error());
     if (auto result = finite(vertex.normal); !result) return std::unexpected(result.error());
     if (auto result = finite(vertex.tangent); !result) return std::unexpected(result.error());
-    for (const auto& uv : vertex.uv)
-    {
-        if (auto result = finite(uv); !result) return std::unexpected(result.error());
-        for (float value : uv)
-            if (std::abs(value) > 65504.f)
-                return std::unexpected("UV exceeds finite half-float range");
-    }
+    if (auto result = finite(vertex.uv); !result) return std::unexpected(result.error());
+    for (float value : vertex.uv)
+        if (std::abs(value) > 65504.f) return std::unexpected("UV exceeds finite half-float range");
     return {};
 }
 
-float Model::PackDirection(const float* direction, glm::vec3 fallback)
+uint32_t Model::PackDirection(const float* direction, glm::vec3 fallback)
 {
     glm::vec3 unit(direction[0], direction[1], direction[2]);
     float scale = std::max({std::abs(unit.x), std::abs(unit.y), std::abs(unit.z)});
@@ -162,7 +158,7 @@ float Model::PackDirection(const float* direction, glm::vec3 fallback)
     for (unsigned i = 0; i < 3; ++i)
         bits |= (static_cast<uint32_t>(meshopt_quantizeSnorm(unit[i], 10)) & 0x3ffu) << (
             i * 10);
-    return std::bit_cast<float>(bits);
+    return bits;
 }
 
 RM::Result<Vertex> Model::PackVertex(const SourceVertex& source)
@@ -171,21 +167,16 @@ RM::Result<Vertex> Model::PackVertex(const SourceVertex& source)
     Vertex result{};
     for (unsigned i = 0; i < 3; ++i) result.position[i] = source.position[i];
     result.normal = PackDirection(source.normal, {0, 0, 1});
-    result.tangent = PackDirection(source.tangent, {1, 0, 0});
-    result.bitangent = source.tangent[3] < 0 ? 1u : 0u;
-    for (unsigned i = 0; i < 2; ++i)
-    {
-        uint32_t bits = static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[i][0])) |
-                        (static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[i][1])) << 16);
-        result.uv[i] = bits;
-    }
+    result.tangent = PackDirection(source.tangent, {1, 0, 0}) |
+                     ((source.tangent[3] < 0 ? 3u : 1u) << 30);
+    result.uv = static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[0])) |
+                (static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[1])) << 16);
     return result;
 }
 
 struct Model::TangentData
 {
     std::vector<SourceVertex>* vertices;
-    unsigned uv;
 };
 
 Model::SourceVertex& Model::Corner(const SMikkTSpaceContext* context, int face, int vertex)
@@ -194,9 +185,9 @@ Model::SourceVertex& Model::Corner(const SMikkTSpaceContext* context, int face, 
         static_cast<size_t>(face) * 3 + vertex];
 }
 
-RM::Result<void> Model::GenerateTangents(std::vector<SourceVertex>& vertices, const unsigned uv)
+RM::Result<void> Model::GenerateTangents(std::vector<SourceVertex>& vertices)
 {
-    TangentData data{&vertices, uv};
+    TangentData data{&vertices};
     SMikkTSpaceInterface mikkspace{};
     mikkspace.m_getNumFaces = [](const SMikkTSpaceContext* c)
     {
@@ -214,9 +205,7 @@ RM::Result<void> Model::GenerateTangents(std::vector<SourceVertex>& vertices, co
     };
     mikkspace.m_getTexCoord = [](const SMikkTSpaceContext* c, float* out, int f, int v)
     {
-        std::copy_n(Corner(c, f, v).uv[static_cast<TangentData*>(c->m_pUserData)->uv],
-                    2,
-                    out);
+        std::copy_n(Corner(c, f, v).uv, 2, out);
     };
     mikkspace.m_setTSpaceBasic = [](const SMikkTSpaceContext* c,
                                     const float* tangent,
@@ -280,26 +269,20 @@ RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
                                                                 });
     if (!tangents_result) return std::unexpected(tangents_result.error());
     bool tangents = *tangents_result;
-    bool uv_present[2]{};
-    for (int uv = 0; uv < 2; ++uv)
-    {
-        auto uv_result = ReadAttribute<fastgltf::math::fvec2>(asset,
-                                                              primitive,
-                                                              uv ? "TEXCOORD_1" : "TEXCOORD_0",
-                                                              count,
-                                                              fastgltf::AccessorType::Vec2,
-                                                              [&](auto value, size_t i)
-                                                              {
-                                                                  for (int j = 0; j < 2; ++j)
-                                                                      vertices[i].uv[uv][j] =
-                                                                          value[j];
-                                                              });
-        if (!uv_result) return std::unexpected(uv_result.error());
-        uv_present[uv] = *uv_result;
-    }
+    auto uv_result = ReadAttribute<fastgltf::math::fvec2>(asset,
+                                                          primitive,
+                                                          "TEXCOORD_0",
+                                                          count,
+                                                          fastgltf::AccessorType::Vec2,
+                                                          [&](auto value, size_t i)
+                                                          {
+                                                              for (int j = 0; j < 2; ++j)
+                                                                  vertices[i].uv[j] = value[j];
+                                                          });
+    if (!uv_result) return std::unexpected(uv_result.error());
+    bool uv_present = *uv_result;
     for (int slot = 0; slot < 5; ++slot)
-        if (material.textures[slot] != UINT16_MAX && !uv_present[
-                (material.uv_sets >> slot) & 1])
+        if (material.textures[slot] != UINT16_MAX && !uv_present)
             return std::unexpected("Material references missing texture coordinates");
     for (const auto& vertex : vertices)
     {
@@ -359,7 +342,7 @@ RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
             }
         }
         if (!tangents && material.textures[2] != UINT16_MAX)
-            if (auto result = GenerateTangents(vertices, (material.uv_sets >> 2) & 1); !result)
+            if (auto result = GenerateTangents(vertices); !result)
                 return std::unexpected(result.error());
     }
     std::vector<Vertex> packed;
@@ -487,12 +470,11 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
         auto slot = [&](const auto& info, unsigned slot_index, bool srgb) -> RM::Result<void>
         {
             if (!info) return {};
-            if (info->texCoordIndex > 1 || info->transform)
+            if (info->texCoordIndex != 0 || info->transform)
                 return std::unexpected("Unsupported texture coordinates or transform");
             auto texture_result = load_texture(info->textureIndex, srgb);
             if (!texture_result) return std::unexpected(texture_result.error());
             material.textures[slot_index] = std::move(*texture_result);
-            material.uv_sets |= static_cast<uint32_t>(info->texCoordIndex) << slot_index;
             return {};
         };
         if (auto result = slot(source.pbrData.baseColorTexture, 0, true); !result)

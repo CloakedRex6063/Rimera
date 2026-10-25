@@ -10,6 +10,7 @@ namespace RM
 {
     class Buffer;
     class Texture;
+    class Shader;
 
     struct UInt2
     {
@@ -302,7 +303,7 @@ namespace RM
 
     struct ComputePipelineCreateInfo
     {
-        ShaderCreateInfo shader;
+        const Shader* shader = nullptr;
     };
 
     enum class FrontFace
@@ -494,8 +495,8 @@ namespace RM
         std::vector<Format> rtv_formats;
         std::optional<Format> dsv_format;
         std::vector<BlendInfo> blend_infos;
-        ShaderCreateInfo vertex_shader;
-        ShaderCreateInfo fragment_shader;
+        const Shader* vertex_shader = nullptr;
+        const Shader* fragment_shader = nullptr;
         DepthStencilState depth_stencil_state;
         RasterizerState rasterizer_state;
         VertexInputState input_state;
@@ -504,9 +505,9 @@ namespace RM
 
     struct MeshGraphicsPipelineCreateInfo
     {
-        ShaderCreateInfo ampl_shader;
-        ShaderCreateInfo mesh_shader;
-        ShaderCreateInfo fragment_shader;
+        const Shader* ampl_shader = nullptr;
+        const Shader* mesh_shader = nullptr;
+        const Shader* fragment_shader = nullptr;
         std::vector<Format> rtv_formats;
         std::optional<Format> dsv_format;
         std::vector<BlendInfo> blend_infos;

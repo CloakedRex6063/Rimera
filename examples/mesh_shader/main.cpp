@@ -1,4 +1,6 @@
+#include "imgui.h"
 #include "rimera_device.hpp"
+#include "rimera_compiler.hpp"
 #include "window.hpp"
 #include "camera.hpp"
 #include "model.hpp"
@@ -21,16 +23,18 @@ struct MeshShaderScene
     struct DrawData
     {
         uint32_t meshlet_index;
-        uint32_t vertex_index;
+        uint32_t position_index;
+        uint32_t normal_index;
+        uint32_t uv_index;
+        uint32_t tangent_index;
         uint32_t vertex_indices_index;
         uint32_t triangle_index;
         uint32_t meshlet_buffer_index;
         uint32_t transform_index;
         uint32_t material_index;
-        uint32_t padding{};
     };
 
-    static_assert(sizeof(DrawData) == 32);
+    static_assert(sizeof(DrawData) == 40);
 
     struct SceneData
     {
@@ -40,9 +44,12 @@ struct MeshShaderScene
         uint32_t texture_buffer_index;
         uint32_t sampler_index;
         uint32_t padding[3]{};
+        glm::mat4 view_projection{1};
     };
 
-    static_assert(sizeof(SceneData) == 32);
+    static_assert(sizeof(SceneData) == 96);
+
+    static constexpr uint32_t kFramesInFlight = 3;
 
     struct TonemapData
     {
@@ -57,6 +64,10 @@ struct MeshShaderScene
     static constexpr auto kVisibilityFormat = RM::Format::R32_UInt;
     static constexpr auto kColorFormat = RM::Format::RGBA16_Float;
     static constexpr auto kDepthFormat = RM::Format::Depth32_Float;
+    static constexpr auto kUVFormat = RM::Format::R32_UInt;
+    static constexpr auto kDerivFormat = RM::Format::RGBA16_Float;
+    static constexpr auto kTangentFrameFormat = RM::Format::RGBA16_UInt;
+    static constexpr auto kAlbedoFormat = RM::Format::RGBA16_Float;
 
     MeshShaderScene(RM::Device* device, Model* model, glm::uvec2 size)
         : device(device), model(model), size(size), residency(device->GetCoreResidencySet())
@@ -69,14 +80,21 @@ struct MeshShaderScene
     RM::ResidencySet* residency;
     uint32_t meshlet_count = 0;
     RM::Buffer* draw_buffer = nullptr;
-    RM::Buffer* scene_buffer = nullptr;
+    std::array<RM::Buffer*, kFramesInFlight> scene_buffers{};
+    std::array<SceneData*, kFramesInFlight> scene_data{};
+    SceneData scene_constants{};
+    uint32_t scene_frame = 0;
     RM::Buffer* transform_buffer = nullptr;
     RM::Buffer* material_buffer = nullptr;
     RM::Buffer* texture_buffer = nullptr;
-    RM::Pipeline* pipeline = nullptr;
-    RM::Pipeline* visualize_pipeline = nullptr;
+    RM::Pipeline* vis_pipeline = nullptr;
+    RM::Pipeline* interp_pipeline = nullptr;
+    RM::Pipeline* shading_pipeline = nullptr;
+    RM::Pipeline* debug_pipeline = nullptr;
     RM::Pipeline* tonemap_pipeline = nullptr;
     RM::Sampler* sampler = nullptr;
+    RM::Compiler* compiler = nullptr;
+    std::vector<const RM::Shader*> shaders;
 
     template <class T>
     RM::Result<void> Upload(const std::vector<T>& values, RM::Buffer*& buffer)
@@ -97,7 +115,10 @@ struct MeshShaderScene
     {
         for (auto* mesh : model->GetMeshes())
         {
-            residency->AddAllocation(mesh->GetVertexBuffer());
+            residency->AddAllocation(mesh->GetPositionBuffer());
+            residency->AddAllocation(mesh->GetNormalBuffer());
+            residency->AddAllocation(mesh->GetUVBuffer());
+            residency->AddAllocation(mesh->GetTangentBuffer());
             residency->AddAllocation(mesh->GetVertexIndexBuffer());
             residency->AddAllocation(mesh->GetTriangleBuffer());
             residency->AddAllocation(mesh->GetMeshletBuffer());
@@ -119,7 +140,10 @@ struct MeshShaderScene
             {
                 draw_data.push_back({
                     .meshlet_index = meshlet,
-                    .vertex_index = mesh.GetVertexBuffer()->GetResourceIndex(),
+                    .position_index = mesh.GetPositionBuffer()->GetResourceIndex(),
+                    .normal_index = mesh.GetNormalBuffer()->GetResourceIndex(),
+                    .uv_index = mesh.GetUVBuffer()->GetResourceIndex(),
+                    .tangent_index = mesh.GetTangentBuffer()->GetResourceIndex(),
                     .vertex_indices_index = mesh.GetVertexIndexBuffer()->GetResourceIndex(),
                     .triangle_index = mesh.GetTriangleBuffer()->GetResourceIndex(),
                     .meshlet_buffer_index = mesh.GetMeshletBuffer()->GetResourceIndex(),
@@ -142,22 +166,45 @@ struct MeshShaderScene
         if (texture_indices.empty()) texture_indices.push_back(UINT32_MAX);
         if (auto result = Upload(texture_indices, texture_buffer); !result) return result;
 
-        SceneData scene{.draw_buffer_index = draw_buffer->GetResourceIndex(),
-                        .transform_buffer_index = transform_buffer->GetResourceIndex(),
-                        .material_buffer_index = material_buffer->GetResourceIndex(),
-                        .texture_buffer_index = texture_buffer->GetResourceIndex(),
-                        .sampler_index = sampler->GetSamplerIndex()};
-        auto scene_buffer_result = device->CreateBuffer({.size = sizeof(scene), .data = &scene});
-        if (!scene_buffer_result) return std::unexpected(scene_buffer_result.error());
-        scene_buffer = *scene_buffer_result;
-        residency->AddAllocation(scene_buffer);
+        scene_constants = {.draw_buffer_index = draw_buffer->GetResourceIndex(),
+                           .transform_buffer_index = transform_buffer->GetResourceIndex(),
+                           .material_buffer_index = material_buffer->GetResourceIndex(),
+                           .texture_buffer_index = texture_buffer->GetResourceIndex(),
+                           .sampler_index = sampler->GetSamplerIndex()};
+        for (uint32_t i = 0; i < kFramesInFlight; ++i)
+        {
+            auto scene_buffer_result =
+                device->CreateBuffer({.size = sizeof(SceneData), .data = &scene_constants});
+            if (!scene_buffer_result) return std::unexpected(scene_buffer_result.error());
+            scene_buffers[i] = *scene_buffer_result;
+            auto mapped = scene_buffers[i]->Map();
+            if (!mapped) return std::unexpected(mapped.error());
+            scene_data[i] = static_cast<SceneData*>(*mapped);
+            residency->AddAllocation(scene_buffers[i]);
+        }
 
-        std::filesystem::path shader_path = FileIO::ResourcePath() + "shaders/mesh_model.hlsl";
-        auto model_shader = FileIO::Read(shader_path);
-        if (!model_shader) return std::unexpected(model_shader.error());
+        const std::string shaders_dir = FileIO::ResourcePath() + "shaders";
+        const std::string_view include_paths[] = {shaders_dir};
+        auto compiler_result = RM::CreateCompiler({.include_paths = include_paths});
+        if (!compiler_result) return std::unexpected(compiler_result.error());
+        compiler = *compiler_result;
+
+        auto vis_mesh_shader = CompileShader("vis.hlsl", "MSMain", RM::ShaderType::Mesh);
+        if (!vis_mesh_shader) return std::unexpected(vis_mesh_shader.error());
+        auto vis_fragment_shader = CompileShader("vis.hlsl", "PSMain", RM::ShaderType::Fragment);
+        if (!vis_fragment_shader) return std::unexpected(vis_fragment_shader.error());
+        auto interp_shader = CompileShader("interp.hlsl", "CSMain", RM::ShaderType::Compute);
+        if (!interp_shader) return std::unexpected(interp_shader.error());
+        auto shading_shader = CompileShader("shading.hlsl", "CSMain", RM::ShaderType::Compute);
+        if (!shading_shader) return std::unexpected(shading_shader.error());
+        auto debug_shader = CompileShader("debug.hlsl", "CSMain", RM::ShaderType::Compute);
+        if (!debug_shader) return std::unexpected(debug_shader.error());
+        auto tonemap_shader = CompileShader("tonemap.hlsl", "CSMain", RM::ShaderType::Compute);
+        if (!tonemap_shader) return std::unexpected(tonemap_shader.error());
+
         RM::MeshGraphicsPipelineCreateInfo pipeline_info{
-            .mesh_shader = {.code = *model_shader, .entry_point = "MSMain"},
-            .fragment_shader = {.code = *model_shader, .entry_point = "PSMain"},
+            .mesh_shader = *vis_mesh_shader,
+            .fragment_shader = *vis_fragment_shader,
             .rtv_formats = {kVisibilityFormat},
             .dsv_format = kDepthFormat,
             .depth_stencil_state = {
@@ -170,35 +217,72 @@ struct MeshShaderScene
         };
         auto pipeline_result = device->CreatePipeline(pipeline_info);
         if (!pipeline_result) return std::unexpected(pipeline_result.error());
-        pipeline = *pipeline_result;
+        vis_pipeline = *pipeline_result;
 
-        auto visualize_shader =
-            FileIO::Read(FileIO::ResourcePath() + "shaders/visibility.hlsl");
-        if (!visualize_shader) return std::unexpected(visualize_shader.error());
-        auto visualize_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
-            .shader = {.code = *visualize_shader, .entry_point = "CSMain"},
+        auto interp_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
+            .shader = *interp_shader,
         });
-        if (!visualize_result) return std::unexpected(visualize_result.error());
-        visualize_pipeline = *visualize_result;
+        if (!interp_result) return std::unexpected(interp_result.error());
+        interp_pipeline = *interp_result;
 
-        auto tonemap_shader = FileIO::Read(FileIO::ResourcePath() + "shaders/tonemap.hlsl");
-        if (!tonemap_shader) return std::unexpected(tonemap_shader.error());
+        auto shading_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
+            .shader = *shading_shader,
+        });
+        if (!shading_result) return std::unexpected(shading_result.error());
+        shading_pipeline = *shading_result;
+
+        auto debug_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
+            .shader = *debug_shader,
+        });
+        if (!debug_result) return std::unexpected(debug_result.error());
+        debug_pipeline = *debug_result;
+
         auto tonemap_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
-            .shader = {.code = *tonemap_shader, .entry_point = "CSMain"},
+            .shader = *tonemap_shader,
         });
         if (!tonemap_result) return std::unexpected(tonemap_result.error());
         tonemap_pipeline = *tonemap_result;
+        ReleaseShaders();
         residency->Commit();
         return {};
     }
 
+    RM::Result<const RM::Shader*> CompileShader(std::string_view file,
+                                                std::string_view entry_point,
+                                                RM::ShaderType type)
+    {
+        auto source = FileIO::Read(FileIO::ResourcePath() + "shaders/" + std::string(file));
+        if (!source) return std::unexpected(source.error());
+        auto shader = compiler->Compile({.code = *source, .entry_point = entry_point}, type);
+        if (!shader) return std::unexpected(std::string(file) + ": " + shader.error());
+        shaders.push_back(*shader);
+        return *shader;
+    }
+
+    void ReleaseShaders()
+    {
+        for (const auto* shader : shaders) RM::DestroyShader(shader);
+        shaders.clear();
+        if (compiler) RM::DestroyCompiler(compiler);
+        compiler = nullptr;
+    }
+
+    RM::Buffer* UpdateScene(const glm::mat4& view_projection)
+    {
+        scene_frame = (scene_frame + 1) % kFramesInFlight;
+        scene_constants.view_projection = view_projection;
+        std::memcpy(scene_data[scene_frame], &scene_constants, sizeof(SceneData));
+        return scene_buffers[scene_frame];
+    }
+
     void Cleanup()
     {
-        for (auto* buffer : {draw_buffer, scene_buffer, transform_buffer, material_buffer,
-                             texture_buffer})
+        ReleaseShaders();
+        for (auto* buffer : {draw_buffer, transform_buffer, material_buffer, texture_buffer})
             device->DestroyImmediate(buffer);
-        if (pipeline) device->DestroyImmediate(pipeline);
-        if (visualize_pipeline) device->DestroyImmediate(visualize_pipeline);
+        for (auto* buffer : scene_buffers) device->DestroyImmediate(buffer);
+        if (vis_pipeline) device->DestroyImmediate(vis_pipeline);
+        if (debug_pipeline) device->DestroyImmediate(debug_pipeline);
         if (tonemap_pipeline) device->DestroyImmediate(tonemap_pipeline);
         if (sampler) device->DestroyImmediate(sampler);
         delete model;
@@ -317,6 +401,9 @@ int main()
     }
     imgui = result_imgui.value();
 
+    bool bDebugVisibility = true;
+    glm::uvec2 viewport_size = size;
+    bool viewport_input = false;
     while (window->IsRunning())
     {
         window->Tick();
@@ -343,9 +430,14 @@ int main()
 
         imgui->NewFrame(delta_time);
         imgui->ShowStatistics(*graph);
-        if (!imgui->WantsMouse() && !imgui->WantsKeyboard()) camera.Update(*window, delta_time);
+        const bool camera_input =
+            (viewport_input && !imgui->WantsTextInput()) ||
+            (!imgui->WantsMouse() && !imgui->WantsKeyboard());
+        if (camera_input) camera.Update(*window, delta_time);
+        camera.SetAspect(static_cast<float>(viewport_size.x) / static_cast<float>(viewport_size.y));
+        const glm::uvec2 render_size = viewport_size;
 
-        if (!imgui->WantsKeyboard() && window->IsKeyPressed(Key::Tab))
+        if (camera_input && window->IsKeyPressed(Key::Tab))
             camera.SetMode(camera.GetMode() == CameraMode::Orbit
                                ? CameraMode::Fly
                                : CameraMode::Orbit);
@@ -374,17 +466,38 @@ int main()
 
         auto output = graph->ImportTexture(swapchain->GetCurrentBackBuffer(), present, present);
         auto visibility = graph->CreateTexture(
-            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kVisibilityFormat).Build(),
+            RM::TextureBuilder(render_size.x, render_size.y).Format(
+                MeshShaderScene::kVisibilityFormat).Build(),
             "visibility");
-        auto color = graph->CreateTexture(
-            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kColorFormat).Build(),
-            "color");
-        auto display = graph->CreateTexture(
-            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kColorFormat).Build(),
-            "display");
+        auto debug = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y)
+            .Format(MeshShaderScene::kColorFormat).Build(),
+            "debug");
+        auto pp = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y)
+            .Format(MeshShaderScene::kColorFormat).Build(),
+            "pp");
         auto depth = graph->CreateTexture(
-            RM::TextureBuilder(size.x, size.y).Format(MeshShaderScene::kDepthFormat).Build(),
+            RM::TextureBuilder(render_size.x, render_size.y)
+            .Format(MeshShaderScene::kDepthFormat).Build(),
             "depth");
+        auto uv_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y)
+            .Format(MeshShaderScene::kUVFormat).Build(),
+            "uv");
+        auto uv_gradient_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y)
+            .Format(MeshShaderScene::kDerivFormat).Build(),
+            "uv gradients");
+        auto tangent_frame_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y).Format(
+                MeshShaderScene::kTangentFrameFormat).Build(),
+            "tangent frame");
+
+        auto albedo_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y).Format(
+                MeshShaderScene::kAlbedoFormat).Build(),
+            "albedo");
 
         graph->AddRenderPass("Scene")
              .Color(visibility,
@@ -392,38 +505,97 @@ int main()
                     RM::StoreOp::Store,
                     {.r = 0, .g = 0, .b = 0, .a = 0})
              .Depth(depth, RM::LoadOp::Clear, RM::StoreOp::DontCare)
-             .Pipeline(scene.pipeline)
-             .ConstantBuffer(0, scene.scene_buffer)
-             .RootConstants(view_projection)
+             .Pipeline(scene.vis_pipeline)
+             .ConstantBuffer(0, scene.UpdateScene(view_projection))
              .DispatchMesh({.x = scene.meshlet_count, .y = 1, .z = 1});
+
+        graph->AddComputePass("Interp")
+             .Read(visibility)
+             .Write(uv_texture)
+             .Write(uv_gradient_texture)
+             .Write(tangent_frame_texture)
+             .Pipeline(scene.interp_pipeline)
+             .ConstantBuffer(0, scene.UpdateScene(view_projection))
+             .RootConstants(render_size, 0)
+             .ResourceIndex(8, visibility)
+             .ResourceIndex(12, uv_texture)
+             .ResourceIndex(16, uv_gradient_texture)
+             .ResourceIndex(20, tangent_frame_texture)
+             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
+
+        graph->AddComputePass("Shading")
+             .Read(visibility)
+             .Read(uv_texture)
+             .Read(uv_gradient_texture)
+             .Read(tangent_frame_texture)
+             .Write(albedo_texture)
+             .Pipeline(scene.shading_pipeline)
+             .ConstantBuffer(0, scene.UpdateScene(view_projection))
+             .RootConstants(render_size, 0)
+             .ResourceIndex(8, uv_texture)
+             .ResourceIndex(12, uv_gradient_texture)
+             .ResourceIndex(16, tangent_frame_texture)
+             .ResourceIndex(20, visibility)
+             .ResourceIndex(24, albedo_texture)
+             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
         graph->AddComputePass("Visualize")
              .Read(visibility)
-             .Write(color)
-             .Pipeline(scene.visualize_pipeline)
+             .Write(debug)
+             .Pipeline(scene.debug_pipeline)
              .ResourceIndex(0, visibility)
-             .ResourceIndex(4, color)
-             .RootConstants(size, 8)
-             .Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
+             .ResourceIndex(4, debug)
+             .RootConstants(render_size, 8)
+             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
         graph->AddComputePass("Tonemap")
-             .Read(color)
-             .Write(display)
+             .Read(bDebugVisibility ? debug : albedo_texture)
+             .Write(pp)
              .Pipeline(scene.tonemap_pipeline)
-             .ResourceIndex(0, color)
-             .ResourceIndex(4, display)
+             .ResourceIndex(0, bDebugVisibility ? debug : albedo_texture)
+             .ResourceIndex(4, pp)
              .RootConstants(MeshShaderScene::TonemapData{
-                                .size = size,
+                                .size = render_size,
                                 .headroom = display_info.headroom,
                                 .sdr_white_scale = display_info.sdr_white_scale,
                                 .hdr = display_info.hdr ? 1u : 0u,
                             },
                             8)
-             .Dispatch({.x = (size.x + 7) / 8, .y = (size.y + 7) / 8, .z = 1});
+             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
-        imgui->AddPass(graph, display);
+        viewport_input = false;
+        if (ImGui::Begin("Viewport"))
+        {
+            const ImVec2 available = ImGui::GetContentRegionAvail();
+            const ImVec2 pixel_scale = ImGui::GetIO().DisplayFramebufferScale;
+            const glm::uvec2 requested(
+                static_cast<uint32_t>(std::max(available.x, 0.f) * pixel_scale.x),
+                static_cast<uint32_t>(std::max(available.y, 0.f) * pixel_scale.y));
+            if (requested.x && requested.y)
+            {
+                viewport_size = requested;
+                const ImVec2 origin = ImGui::GetCursorPos();
+                ImGui::Image(imgui->GetTextureID(pp), available);
+                ImGui::SetCursorPos(origin);
+                ImGui::InvisibleButton("##viewport_input",
+                                       available,
+                                       ImGuiButtonFlags_MouseButtonLeft |
+                                       ImGuiButtonFlags_MouseButtonRight |
+                                       ImGuiButtonFlags_MouseButtonMiddle);
+                viewport_input = ImGui::IsItemHovered() || ImGui::IsItemActive();
+            }
+        }
+        ImGui::End();
 
-        graph->AddCopyPass("Backbuffer Blit").Blit(display, output);
+        if (ImGui::Begin("Visibility Buffer"))
+        {
+            ImGui::Checkbox("Debug Visibility", &bDebugVisibility);
+        }
+        ImGui::End();
+
+        imgui->AddPass(graph, output);
+
+        //graph->AddCopyPass("Backbuffer Blit").Blit(pp, output);
 
         if (auto result = graph->Execute(command); !result)
         {

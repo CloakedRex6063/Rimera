@@ -6,6 +6,7 @@
 #include "GLFW/glfw3.h"
 #include "rimera_buffer.hpp"
 #include "rimera_builders.hpp"
+#include "rimera_compiler.hpp"
 #include "rimera_command.hpp"
 #include "rimera_device.hpp"
 #include "rimera_residency.hpp"
@@ -113,6 +114,8 @@ ImGuiLayer::~ImGuiLayer()
     if (m_font_texture) m_device->DestroyImmediate(m_font_texture);
     if (m_sampler) m_device->DestroyImmediate(m_sampler);
     for (const auto& [format, pipeline] : m_pipelines) m_device->DestroyImmediate(pipeline);
+    if (m_vertex_shader) RM::DestroyShader(m_vertex_shader);
+    if (m_fragment_shader) RM::DestroyShader(m_fragment_shader);
     if (m_plot_context) ImPlot::DestroyContext(m_plot_context);
     if (m_context)
     {
@@ -174,9 +177,26 @@ RM::Result<void> ImGuiLayer::Initialize(RM::Device* device,
 RM::Result<RM::Pipeline*> ImGuiLayer::GetPipeline(RM::Format format)
 {
     if (const auto it = m_pipelines.find(format); it != m_pipelines.end()) return it->second;
-    auto vertex_shader = RM::ShaderBuilder(kShader).EntryPoint("VSMain").Build();
-    auto fragment_shader = RM::ShaderBuilder(kShader).EntryPoint("PSMain").Build();
-    auto pipeline_info = RM::GraphicsPipelineBuilder(vertex_shader, fragment_shader)
+    if (!m_vertex_shader || !m_fragment_shader)
+    {
+        auto compiler = RM::CreateCompiler();
+        if (!compiler) return std::unexpected(compiler.error());
+        auto vertex = (*compiler)->Compile(RM::ShaderBuilder(kShader).EntryPoint("VSMain").Build(),
+                                           RM::ShaderType::Vertex);
+        auto fragment = (*compiler)->Compile(RM::ShaderBuilder(kShader).EntryPoint("PSMain").Build(),
+                                             RM::ShaderType::Fragment);
+        RM::DestroyCompiler(*compiler);
+        if (!vertex || !fragment)
+        {
+            auto error = !vertex ? vertex.error() : fragment.error();
+            if (vertex) RM::DestroyShader(*vertex);
+            if (fragment) RM::DestroyShader(*fragment);
+            return std::unexpected(std::move(error));
+        }
+        m_vertex_shader = *vertex;
+        m_fragment_shader = *fragment;
+    }
+    auto pipeline_info = RM::GraphicsPipelineBuilder(m_vertex_shader, m_fragment_shader)
                          .AddRenderTarget(format)
                          .AddBlendInfo(RM::BlendInfoBuilder()
                                        .Color(RM::BlendFactor::SrcAlpha,
@@ -258,6 +278,9 @@ void ImGuiLayer::NewFrame(float delta_time)
     ImGui_ImplGlfw_NewFrame();
     if (delta_time > 0.f) io.DeltaTime = delta_time;
     ImGui::NewFrame();
+    ImGui::DockSpaceOverViewport(0,
+                                 ImGui::GetMainViewport(),
+                                 ImGuiDockNodeFlags_PassthruCentralNode);
 }
 
 uint64_t ImGuiLayer::GetTextureID(const RM::Texture* texture) const
@@ -286,16 +309,17 @@ void ImGuiLayer::AddPass(RM::RenderGraph* graph, RM::GraphTexture target)
     ImGui::SetCurrentContext(m_context);
     ImGui::Render();
     auto pass = graph->AddRenderPass("ImGui");
-    pass.Color(target);
+    pass.Color(target, RM::LoadOp::Clear);
     for (const auto texture : m_graph_textures)
         pass.Read(texture, RM::BarrierStage::PixelShading);
-    pass.Execute([this](RM::RenderGraphContext& context) -> RM::Result<void>
+    pass.Execute([this, target](RM::RenderGraphContext& context) -> RM::Result<void>
     {
+        const auto* texture = context.GetTexture(target);
         return Record(context,
                       ImGui::GetMainViewport()->DrawData,
                       m_main_viewport,
                       m_display_info,
-                      m_format);
+                      texture ? texture->GetFormat() : m_format);
     });
 
     if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_ViewportsEnable)

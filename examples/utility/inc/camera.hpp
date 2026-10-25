@@ -31,6 +31,7 @@ public:
     [[nodiscard]] glm::mat4 GetView() const;
     [[nodiscard]] glm::mat4 GetProjection() const;
     [[nodiscard]] glm::mat4 GetViewProjection() const { return GetProjection() * GetView(); }
+    void SetAspect(float aspect) { m_aspect = aspect; }
 
 private:
     void UpdateOrbit(const Window& window);

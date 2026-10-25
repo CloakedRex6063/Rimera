@@ -437,11 +437,11 @@ namespace RM
     {
     public:
         GraphicsPipelineBuilder(
-            ShaderCreateInfo vertex_shader,
-            ShaderCreateInfo fragment_shader)
+            const Shader* vertex_shader,
+            const Shader* fragment_shader)
         {
-            m_value.vertex_shader = std::move(vertex_shader);
-            m_value.fragment_shader = std::move(fragment_shader);
+            m_value.vertex_shader = vertex_shader;
+            m_value.fragment_shader = fragment_shader;
             m_value.polygon_mode = PolygonMode::Triangle;
 
             m_value.rasterizer_state = RasterizerState{};

@@ -83,10 +83,10 @@ private:
                                           fastgltf::AccessorType type,
                                           F write);
     static RM::Result<void> ValidateVertex(const SourceVertex& vertex);
-    static float PackDirection(const float* direction, glm::vec3 fallback);
+    static uint32_t PackDirection(const float* direction, glm::vec3 fallback);
     static RM::Result<Vertex> PackVertex(const SourceVertex& source);
     static SourceVertex& Corner(const SMikkTSpaceContext* context, int face, int vertex);
-    static RM::Result<void> GenerateTangents(std::vector<SourceVertex>& vertices, unsigned uv);
+    static RM::Result<void> GenerateTangents(std::vector<SourceVertex>& vertices);
     static RM::Result<Mesh*> LoadMesh(RM::Device* device,
                                       const fastgltf::Asset& asset,
                                       const fastgltf::Primitive& primitive,

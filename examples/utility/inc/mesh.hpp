@@ -26,28 +26,22 @@ struct Material
     
     // Bits 0-1: opaque=0, mask=1, blend=2; bit 2: double sided.
     uint16_t flags = 0;
-    // Bit i selects TEXCOORD_1 for texture slot i; otherwise TEXCOORD_0.
-    uint32_t uv_sets = 0;
 };
-static_assert(sizeof(Material) == 64 && std::is_trivially_copyable_v<Material>);
-static_assert(offsetof(Material, textures) == 48 && offsetof(Material, flags) == 58 && offsetof(Material, uv_sets) == 60);
+static_assert(sizeof(Material) == 60 && std::is_trivially_copyable_v<Material>);
+static_assert(offsetof(Material, textures) == 48 && offsetof(Material, flags) == 58);
 
 struct Vertex
 {
     glm::vec3 position{};
     // 10_10_10
-    float normal{};
-    // 10_10_10
-    float tangent{};
-    // B = (bitangent ? -1 : 1) * cross(N, T).
-    uint32_t bitangent{};
-    // UV0 in x, UV1 in y
-    glm::uvec2 uv{};
+    uint32_t normal{};
+    // 10_10_10_2
+    uint32_t tangent{};
+    uint32_t uv{};
 };
-static_assert(sizeof(Vertex) == 32 && std::is_trivially_copyable_v<Vertex>);
+static_assert(sizeof(Vertex) == 24 && std::is_trivially_copyable_v<Vertex>);
 static_assert(offsetof(Vertex, position) == 0 && offsetof(Vertex, normal) == 12 &&
-              offsetof(Vertex, tangent) == 16 && offsetof(Vertex, bitangent) == 20 &&
-              offsetof(Vertex, uv) == 24);
+              offsetof(Vertex, tangent) == 16 && offsetof(Vertex, uv) == 20);
 
 class Mesh
 {
@@ -63,7 +57,10 @@ public:
     Mesh(Mesh&&) = delete;
     Mesh& operator=(Mesh&&) = delete;
 
-    [[nodiscard]] RM::Buffer* GetVertexBuffer() const { return m_vertex_buffer; }
+    [[nodiscard]] RM::Buffer* GetPositionBuffer() const { return m_position_buffer; }
+    [[nodiscard]] RM::Buffer* GetNormalBuffer() const { return m_normal_buffer; }
+    [[nodiscard]] RM::Buffer* GetUVBuffer() const { return m_uv_buffer; }
+    [[nodiscard]] RM::Buffer* GetTangentBuffer() const { return m_tangent_buffer; }
     [[nodiscard]] RM::Buffer* GetVertexIndexBuffer() const { return m_vertex_index_buffer; }
     [[nodiscard]] RM::Buffer* GetTriangleBuffer() const { return m_triangle_buffer; }
     [[nodiscard]] RM::Buffer* GetMeshletBuffer() const { return m_meshlet_buffer; }
@@ -84,7 +81,10 @@ private:
                                 uint16_t texture_index);
 
     RM::Device* m_device = nullptr;
-    RM::Buffer* m_vertex_buffer = nullptr;
+    RM::Buffer* m_position_buffer = nullptr;
+    RM::Buffer* m_normal_buffer = nullptr;
+    RM::Buffer* m_uv_buffer = nullptr;
+    RM::Buffer* m_tangent_buffer = nullptr;
     RM::Buffer* m_vertex_index_buffer = nullptr;
     RM::Buffer* m_triangle_buffer = nullptr;
     RM::Buffer* m_meshlet_buffer = nullptr;

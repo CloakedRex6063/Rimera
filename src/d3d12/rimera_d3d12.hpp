@@ -1,11 +1,11 @@
 #pragma once
 #include "rimera_structs.hpp"
+#include "rimera_compiler.hpp"
 
 namespace RM::D3D12
 {
-    [[nodiscard]] Result<ComPtr<IDxcBlob>> CompileShader(const ShaderCreateInfo& shader,
-                                                         ShaderType type);
-    [[nodiscard]] D3D12_SHADER_BYTECODE GetShaderBytecode(const ComPtr<IDxcBlob>& blob);
+    [[nodiscard]] Result<D3D12_SHADER_BYTECODE> GetShaderBytecode(const Shader* shader,
+                                                                  ShaderType type);
 
 #ifdef RIMERA_DEBUG
     void EnableDebugLayer();

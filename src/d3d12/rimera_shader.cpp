@@ -14,21 +14,12 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const ComputePipelineC
 {
     m_device = device;
     m_type = PipelineType::Compute;
-    const std::string entry_point(
-        info.shader.entry_point.empty() ? "main" : info.shader.entry_point);
-
-    auto result_dxil_blob =
-        Helpers::CompileHlsl(info.shader.code, entry_point, ShaderType::Compute);
-    if (!result_dxil_blob) return std::unexpected(result_dxil_blob.error());
-    ComPtr<IDxcBlob> dxil_blob;
-    dxil_blob.Attach(*result_dxil_blob);
+    auto code_result = D3D12::GetShaderBytecode(info.shader, ShaderType::Compute);
+    if (!code_result) return std::unexpected(code_result.error());
 
     auto* native_device = static_cast<ID3D12Device*>(m_device->GetNativeHandle());
     auto* root_sig = static_cast<ID3D12RootSignature*>(device->GetNativeRootSignature());
-    D3D12_SHADER_BYTECODE code{
-        .pShaderBytecode = dxil_blob->GetBufferPointer(),
-        .BytecodeLength = dxil_blob->GetBufferSize(),
-    };
+    const D3D12_SHADER_BYTECODE code = *code_result;
     D3D12_COMPUTE_PIPELINE_STATE_DESC desc{
         .pRootSignature = root_sig,
         .CS = code,
@@ -51,33 +42,13 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const GraphicsPipeline
     auto* native_device = static_cast<ID3D12Device*>(m_device->GetNativeHandle());
     auto* root_sig = static_cast<ID3D12RootSignature*>(device->GetNativeRootSignature());
 
-    const std::string vertex_entry_point(info.vertex_shader.entry_point.empty()
-                                             ? "main"
-                                             : info.vertex_shader.entry_point);
-    auto result_vertex_dxil_blob =
-        Helpers::CompileHlsl(info.vertex_shader.code, vertex_entry_point, ShaderType::Vertex);
-    if (!result_vertex_dxil_blob) return std::unexpected(result_vertex_dxil_blob.error());
-    ComPtr<IDxcBlob> vertex_dxil_blob;
-    vertex_dxil_blob.Attach(*result_vertex_dxil_blob);
+    auto vertex_code_result = D3D12::GetShaderBytecode(info.vertex_shader, ShaderType::Vertex);
+    if (!vertex_code_result) return std::unexpected(vertex_code_result.error());
+    const D3D12_SHADER_BYTECODE vertex_code = *vertex_code_result;
 
-    const std::string frag_entry_point(info.fragment_shader.entry_point.empty()
-                                         ? "main"
-                                         : info.fragment_shader.entry_point);
-
-    auto result_frag_dxil_blob =
-        Helpers::CompileHlsl(info.fragment_shader.code, frag_entry_point, ShaderType::Fragment);
-    if (!result_frag_dxil_blob) return std::unexpected(result_frag_dxil_blob.error());
-    ComPtr<IDxcBlob> frag_dxil_blob;
-    frag_dxil_blob.Attach(*result_frag_dxil_blob);
-
-    D3D12_SHADER_BYTECODE vertex_code{
-        .pShaderBytecode = vertex_dxil_blob->GetBufferPointer(),
-        .BytecodeLength = vertex_dxil_blob->GetBufferSize(),
-    };
-    D3D12_SHADER_BYTECODE frag_code{
-        .pShaderBytecode = frag_dxil_blob->GetBufferPointer(),
-        .BytecodeLength = frag_dxil_blob->GetBufferSize(),
-    };
+    auto frag_code_result = D3D12::GetShaderBytecode(info.fragment_shader, ShaderType::Fragment);
+    if (!frag_code_result) return std::unexpected(frag_code_result.error());
+    const D3D12_SHADER_BYTECODE frag_code = *frag_code_result;
 
     auto result_elements =
         CreateInputLayout(info.input_state.bindings, info.input_state.attributes);
@@ -167,19 +138,19 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const MeshGraphicsPipe
     m_device = device;
     m_type = PipelineType::MeshGraphics;
 
-    ComPtr<IDxcBlob> ampl_blob;
-    if (!info.ampl_shader.code.empty())
+    D3D12_SHADER_BYTECODE ampl_code{};
+    if (info.ampl_shader)
     {
-        auto result = D3D12::CompileShader(info.ampl_shader, ShaderType::Amplification);
+        auto result = D3D12::GetShaderBytecode(info.ampl_shader, ShaderType::Amplification);
         if (!result) return std::unexpected(result.error());
-        ampl_blob = std::move(*result);
+        ampl_code = *result;
     }
-    auto mesh_result = D3D12::CompileShader(info.mesh_shader, ShaderType::Mesh);
+    auto mesh_result = D3D12::GetShaderBytecode(info.mesh_shader, ShaderType::Mesh);
     if (!mesh_result) return std::unexpected(mesh_result.error());
-    auto mesh_blob = std::move(*mesh_result);
-    auto frag_result = D3D12::CompileShader(info.fragment_shader, ShaderType::Fragment);
+    const D3D12_SHADER_BYTECODE mesh_code = *mesh_result;
+    auto frag_result = D3D12::GetShaderBytecode(info.fragment_shader, ShaderType::Fragment);
     if (!frag_result) return std::unexpected(frag_result.error());
-    auto frag_blob = std::move(*frag_result);
+    const D3D12_SHADER_BYTECODE frag_code = *frag_result;
 
     D3D12_BLEND_DESC blend_desc{
         .AlphaToCoverageEnable = false,
@@ -229,9 +200,9 @@ RM::Result<void> RM::Pipeline::Initialize(Device* device, const MeshGraphicsPipe
     };
     D3DX12_MESH_SHADER_PIPELINE_STATE_DESC mesh_desc{
         .pRootSignature = static_cast<ID3D12RootSignature*>(device->GetNativeRootSignature()),
-        .AS = D3D12::GetShaderBytecode(ampl_blob),
-        .MS = D3D12::GetShaderBytecode(mesh_blob),
-        .PS = D3D12::GetShaderBytecode(frag_blob),
+        .AS = ampl_code,
+        .MS = mesh_code,
+        .PS = frag_code,
         .BlendState = blend_desc,
         .SampleMask = D3D12_DEFAULT_SAMPLE_MASK,
         .RasterizerState = raster_desc,

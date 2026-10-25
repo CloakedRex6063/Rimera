@@ -1,5 +1,6 @@
 #include "rimera_metal.hpp"
 #include "rimera_helpers.hpp"
+#include "rimera_compiler.hpp"
 #include "dxc/dxcapi.h"
 #include "metal_irconverter/metal_irconverter.h"
 #define IR_RUNTIME_METALCPP
@@ -42,7 +43,7 @@ void RM::Metal::ShaderReflectionDeleter::operator()(IRShaderReflection* reflecti
 }
 
 RM::Result<RM::Metal::CompiledShader> RM::Metal::CompileShader(Device* device,
-                                                               const ShaderCreateInfo& info,
+                                                               const Shader* shader,
                                                                ShaderType type)
 {
     auto stage_result = ShaderStage(type);
@@ -50,14 +51,11 @@ RM::Result<RM::Metal::CompiledShader> RM::Metal::CompileShader(Device* device,
     const auto [stage, stage_name] = *stage_result;
     const std::string shader_name = std::string(stage_name) + " shader";
     if (!device) return std::unexpected(shader_name + " creation requires a valid device");
-    if (info.code.empty()) return std::unexpected(shader_name + " HLSL must not be empty");
+    if (!shader) return std::unexpected(shader_name + " requires a compiled shader");
+    if (shader->GetType() != type)
+        return std::unexpected("Compiled shader does not match the " + shader_name + " stage");
 
-    const std::string entry_point(info.entry_point.empty() ? "main" : info.entry_point);
-    const auto release_blob = [](IDxcBlob* blob) { blob->Release(); };
-    auto result_dxil_result = Helpers::CompileHlsl(info.code, entry_point, type);
-    if (!result_dxil_result) return std::unexpected(result_dxil_result.error());
-    auto dxil_result = std::move(*result_dxil_result);
-    std::unique_ptr<IDxcBlob, decltype(release_blob)> dxil_blob(dxil_result, release_blob);
+    const std::string entry_point(shader->GetEntryPoint());
     std::unique_ptr<IRCompiler, decltype(&IRCompilerDestroy)> compiler(
         IRCompilerCreate(), IRCompilerDestroy);
     if (!compiler) return std::unexpected("Failed to create Metal shader converter compiler");
@@ -66,8 +64,8 @@ RM::Result<RM::Metal::CompiledShader> RM::Metal::CompileShader(Device* device,
         IRCompilerSetStageInGenerationMode(compiler.get(), IRStageInCodeGenerationModeUseMetalVertexFetch);
 
     std::unique_ptr<IRObject, decltype(&IRObjectDestroy)> dxil(
-        IRObjectCreateFromDXIL(static_cast<const uint8_t*>(dxil_blob->GetBufferPointer()),
-                               dxil_blob->GetBufferSize(), IRBytecodeOwnershipNone),
+        IRObjectCreateFromDXIL(static_cast<const uint8_t*>(shader->GetBytecode()),
+                               shader->GetBytecodeSize(), IRBytecodeOwnershipNone),
         IRObjectDestroy);
     if (!dxil) return std::unexpected("Failed to create DXIL object");
     const auto* root_sig = static_cast<IRRootSignature*>(device->GetNativeRootSignature());
