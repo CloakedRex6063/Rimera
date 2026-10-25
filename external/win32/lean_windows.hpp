@@ -29,7 +29,6 @@
 //#define NOCOLOR // need default colors
 #define NOCTLMGR
 #define NODRAWTEXT
-#define NOGDI
 #define NOKERNEL
 //#define NOUSER // need it - contains MSG and lot other things
 //#define NONLS // need CP_UTF8

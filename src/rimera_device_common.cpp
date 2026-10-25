@@ -174,12 +174,8 @@ void RM::Device::DestroyImmediate(const RenderGraph* render_graph) const
     delete render_graph;
 }
 
-RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
+RM::Result<void> RM::Device::EnsureUploadObjects()
 {
-    const auto footprint = GetCopyFootprint(texture);
-    if (!footprint.size || footprint.size > UINT32_MAX)
-        return std::unexpected("Texture format does not support initial data");
-
     if (!m_upload_queue)
     {
         auto queue = CreateQueue(QueueType::Transfer);
@@ -198,10 +194,80 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
         if (!fence) return std::unexpected(fence.error());
         m_upload_fence = *fence;
     }
+    return {};
+}
+
+RM::Result<void> RM::Device::SubmitUpload()
+{
+    const uint64_t value = m_upload_fence->GetSignaledValue() + 1;
+    const Command* commands[] = {m_upload_command};
+    const FenceOp signals[] = {{m_upload_fence, value}};
+    if (auto result = m_upload_queue->Submit({.commands = commands, .signals = signals}); !result)
+        return result;
+    return m_upload_fence->Wait(value);
+}
+
+RM::Result<void> RM::Device::NewFrame()
+{
+    m_current_frame = (m_current_frame + 1) % m_frame_values.size();
+    const uint64_t pending = m_frame_values[m_current_frame];
+    if (pending > m_frame_fence->GetSignaledValue())
+        return std::unexpected("A frame did not signal Device::GetFrameSignal() in a Submit");
+    if (auto result = m_frame_fence->Wait(pending); !result) return result;
+    m_frame_values[m_current_frame] = m_frame_fence->GetSignaledValue() + 1;
+    ReleaseRetired();
+    return {};
+}
+
+RM::FenceOp RM::Device::GetFrameSignal() const
+{
+    const uint64_t value = m_frame_values[m_current_frame];
+    return {m_frame_fence, value ? value : m_frame_fence->GetSignaledValue() + 1};
+}
+
+RM::Result<void> RM::Device::UploadBuffer(Buffer* buffer, const void* data)
+{
+    if (auto result = EnsureUploadObjects(); !result) return std::unexpected(result.error());
+
+    auto staging_result = CreateBuffer({
+        .size = buffer->GetLength(),
+        .data = data,
+        .memory_type = MemoryType::HostVisible,
+        .flags = BufferFlags::eNone,
+    });
+    if (!staging_result) return std::unexpected(staging_result.error());
+    auto* staging = *staging_result;
+
+    m_core_residency_set->AddAllocation(buffer);
+    m_core_residency_set->AddAllocation(staging);
+    m_core_residency_set->Commit();
+
+    m_upload_command->Begin();
+    auto result = m_upload_command->CopyBuffer(staging, buffer);
+    m_upload_command->End();
+    if (result)
+    {
+        result = SubmitUpload();
+    }
+
+    m_core_residency_set->RemoveAllocation(buffer);
+    m_core_residency_set->Commit();
+    DestroyImmediate(staging);
+    return result;
+}
+
+RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
+{
+    const auto footprint = GetCopyFootprint(texture);
+    if (!footprint.size || footprint.size > UINT32_MAX)
+        return std::unexpected("Texture format does not support initial data");
+
+    if (auto result = EnsureUploadObjects(); !result) return std::unexpected(result.error());
 
     auto staging_result = CreateBuffer({
         .size = static_cast<uint32_t>(footprint.size),
         .data = nullptr,
+        .memory_type = MemoryType::HostVisible,
         .flags = BufferFlags::eNone,
     });
     if (!staging_result) return std::unexpected(staging_result.error());
@@ -232,9 +298,7 @@ RM::Result<void> RM::Device::UploadTexture(Texture* texture, const void* data)
     m_upload_command->End();
     if (result)
     {
-        m_upload_queue->Submit(m_upload_command);
-        auto value = m_upload_queue->Signal(m_upload_fence);
-        result = value ? m_upload_fence->Wait(*value) : Result<void>(std::unexpected(value.error()));
+        result = SubmitUpload();
     }
 
     m_core_residency_set->RemoveAllocation(texture);

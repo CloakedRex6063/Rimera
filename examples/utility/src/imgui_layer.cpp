@@ -370,6 +370,16 @@ void ImGuiLayer::AddViewportPass(RM::RenderGraph* graph, ImGuiViewport* viewport
         });
 }
 
+void ImGuiLayer::GetAcquiredSwapchains(std::vector<RM::Swapchain*>& swapchains) const
+{
+    ImGui::SetCurrentContext(m_context);
+    for (auto* viewport : ImGui::GetPlatformIO().Viewports)
+    {
+        const auto* data = static_cast<ViewportData*>(viewport->RendererUserData);
+        if (data && data->acquired) swapchains.push_back(data->swapchain);
+    }
+}
+
 void ImGuiLayer::Present()
 {
     ImGui::SetCurrentContext(m_context);
@@ -557,6 +567,7 @@ RM::Result<bool> ImGuiLayer::Grow(RM::Buffer*& buffer,
     auto result = m_device->CreateBuffer({
         .size = new_capacity * stride,
         .data = nullptr,
+        .memory_type = RM::MemoryType::HostVisible,
         .flags = flags,
     });
     if (!result) return std::unexpected(result.error());
@@ -717,6 +728,21 @@ void ImGuiLayer::ShowStatistics(const RM::RenderGraph& graph)
 
     const float frame_time = io.Framerate > 0.f ? 1000.f / io.Framerate : 0.f;
     ImGui::Text("%.1f FPS (%.2f ms)", io.Framerate, frame_time);
+
+    const char* backend = "Unknown";
+    switch (m_device->GetBackendType())
+    {
+        case RM::BackendType::D3D12:
+            backend = "D3D12";
+            break;
+        case RM::BackendType::Metal:
+            backend = "Metal";
+            break;
+        case RM::BackendType::Vulkan:
+            backend = "Vulkan";
+            break;
+    }
+    ImGui::Text("Backend: %s", backend);
 
     if (ImGui::CollapsingHeader("Frame time", ImGuiTreeNodeFlags_DefaultOpen) &&
         ImPlot::BeginPlot("##FrameTime", ImVec2(kPlotWidth, 120.f), kPlotFlags))

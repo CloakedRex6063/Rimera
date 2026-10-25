@@ -943,13 +943,13 @@ MTL::Stages RM::Metal::ToBarrierStages(RM::BarrierStage stages)
     return result;
 }
 
-MTL::StorageMode RM::Metal::ToStorageMode(HeapMemory memory)
+MTL::StorageMode RM::Metal::ToStorageMode(MemoryType memory)
 {
     switch (memory)
     {
-        case HeapMemory::DeviceLocal:
+        case MemoryType::DeviceLocal:
             return MTL::StorageModePrivate;
-        case HeapMemory::HostVisible:
+        case MemoryType::HostVisible:
             return MTL::StorageModeShared;
     }
     return MTL::StorageModePrivate;

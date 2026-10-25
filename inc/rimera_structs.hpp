@@ -11,6 +11,9 @@ namespace RM
     class Buffer;
     class Texture;
     class Shader;
+    class Fence;
+    class Command;
+    class Swapchain;
 
     struct UInt2
     {
@@ -242,23 +245,31 @@ namespace RM
         eUnorderedAccess = 1 << 2,
     };
 
-    struct BufferCreateInfo
+    enum class BackendType
     {
-        uint32_t size;
-        const void* data;
-        EnumFlags<BufferFlags> flags;
+        D3D12,
+        Metal,
+        Vulkan,
     };
 
-    enum class HeapMemory
+    enum class MemoryType
     {
         DeviceLocal,
         HostVisible,
     };
 
+    struct BufferCreateInfo
+    {
+        uint32_t size;
+        const void* data;
+        MemoryType memory_type = MemoryType::DeviceLocal;
+        EnumFlags<BufferFlags> flags;
+    };
+
     struct HeapCreateInfo
     {
         uint64_t size = 0;
-        HeapMemory memory = HeapMemory::DeviceLocal;
+        MemoryType memory = MemoryType::DeviceLocal;
     };
 
     struct ResourceAllocationInfo
@@ -594,7 +605,7 @@ namespace RM
     {
         Undefined = 0xffffffffu,
         Common = 0,
-        Present = Common,
+        Present = 12,
         GenericRead = 1,
         RenderTarget = 2,
         UnorderedAccess = 3,
@@ -765,5 +776,19 @@ namespace RM
     {
         uint32_t frames_in_flight = 3;
         uint64_t heap_granularity = 16ull * 1024 * 1024;
+    };
+
+    struct FenceOp
+    {
+        Fence* fence = nullptr;
+        uint64_t value = 0;
+    };
+
+    struct SubmitInfo
+    {
+        std::span<const Command* const> commands;
+        std::span<const FenceOp> waits;
+        std::span<const FenceOp> signals;
+        std::span<Swapchain* const> swapchains;
     };
 } // namespace RM

@@ -70,6 +70,37 @@ elseif (RIMERA_BACKEND STREQUAL "D3D12")
     target_link_libraries(Rimera PUBLIC D3D12MemoryAllocator)
 
     target_link_libraries(Rimera PRIVATE d3d12 dxgi)
+elseif (RIMERA_BACKEND STREQUAL "Vulkan")
+    FetchContent_Declare(
+            Vulkan-Headers
+            GIT_REPOSITORY https://github.com/KhronosGroup/Vulkan-Headers
+            GIT_TAG v1.4.363
+    )
+    FetchContent_MakeAvailable(Vulkan-Headers)
+
+    set(VOLK_PULL_IN_VULKAN OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+            volk
+            GIT_REPOSITORY https://github.com/zeux/volk
+            GIT_TAG vulkan-sdk-1.4.363.0
+    )
+    FetchContent_MakeAvailable(volk)
+    if (WIN32)
+        target_compile_definitions(volk PUBLIC VK_USE_PLATFORM_WIN32_KHR)
+    endif ()
+    target_link_libraries(volk PUBLIC Vulkan::Headers)
+
+    FetchContent_Declare(
+            VulkanMemoryAllocator
+            GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+            GIT_TAG v3.4.0
+    )
+    FetchContent_MakeAvailable(VulkanMemoryAllocator)
+
+    target_link_libraries(Rimera PUBLIC Vulkan::Headers volk GPUOpen::VulkanMemoryAllocator)
+    if (WIN32)
+        target_link_libraries(Rimera PRIVATE dxgi)
+    endif ()
 endif ()
 
 function(copy_runtime_dlls target)
@@ -92,6 +123,14 @@ function(copy_runtime_dlls target)
                 VERBATIM
         )
         add_dependencies(${target} copy_runtime_${target})
+        add_dependencies(${target} copy_runtime_dxcompiler_${target})
+    elseif (RIMERA_BACKEND STREQUAL "Vulkan")
+        add_custom_target(copy_runtime_dxcompiler_${target}
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:DXC::Compiler>"
+                "$<TARGET_FILE_DIR:${target}>"
+                VERBATIM
+        )
         add_dependencies(${target} copy_runtime_dxcompiler_${target})
     elseif (RIMERA_BACKEND STREQUAL "Metal")
         get_filename_component(METAL_IRCONVERTER_LIBRARY_DIR "${METAL_IRCONVERTER_LIBRARY}" DIRECTORY)

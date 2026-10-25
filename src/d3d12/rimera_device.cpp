@@ -50,6 +50,13 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
     if (FAILED(device.As(&m_device)))
         return std::unexpected("Required D3D12 device interface is unavailable");
 
+    D3D12_FEATURE_DATA_D3D12_OPTIONS16 options16{};
+    m_gpu_upload_heap =
+        SUCCEEDED(m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS16,
+                                                &options16,
+                                                sizeof(options16))) &&
+        options16.GPUUploadHeapSupported;
+
 #ifdef _DEBUG
     if (SUCCEEDED(m_device.As(&m_info_queue)))
     {
@@ -124,7 +131,7 @@ RM::Device::~Device()
 
 RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
     const TextureCreateInfo& info,
-    HeapMemory) const
+    MemoryType) const
 {
     if (auto result = Texture::ValidateCreateInfo(info); !result)
         return std::unexpected(result.error());
@@ -138,7 +145,7 @@ RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
 
 RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
     const BufferCreateInfo& info,
-    HeapMemory) const
+    MemoryType) const
 {
     if (!info.size) return std::unexpected("Invalid buffer creation parameters");
     auto desc = D3D12::GetResourceDesc(info);
@@ -313,18 +320,6 @@ void RM::Device::RemoveDescriptor(const Sampler* sampler)
 void* RM::Device::GetNativeRootSignature() const
 {
     return m_root_sig.Get();
-}
-
-RM::Result<void> RM::Device::NewFrame(Queue* queue)
-{
-    auto value = queue->Signal(m_frame_fence);
-    if (!value) return std::unexpected(value.error());
-    m_frame_values[m_current_frame] = *value;
-    m_current_frame = (m_current_frame + 1) % m_frame_values.size();
-    if (auto result = m_frame_fence->Wait(m_frame_values[m_current_frame]); !result)
-        return result;
-    ReleaseRetired();
-    return {};
 }
 
 void* RM::Device::GetNativeHandle() const

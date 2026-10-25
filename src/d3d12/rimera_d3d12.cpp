@@ -1,21 +1,5 @@
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#ifndef UNICODE
-#define UNICODE
-#endif
-#include "windows.h"
-#include "wrl/client.h"
-using namespace Microsoft::WRL;
-#include "directx/d3d12.h"
-#include "dxgi1_6.h"
-#include "D3D12MemAlloc.h"
-#include "algorithm"
-#include "array"
-#include "cstring"
 #include "cwchar"
-#include "ranges"
 #include "span"
-#include "vector"
 #include "rimera_d3d12.hpp"
 #include "cassert"
 #include "rimera_buffer.hpp"
@@ -186,13 +170,13 @@ D3D12_RESOURCE_DESC RM::D3D12::GetResourceDesc(const TextureCreateInfo& info)
     };
 }
 
-D3D12_HEAP_TYPE RM::D3D12::GetHeapType(HeapMemory memory)
+D3D12_HEAP_TYPE RM::D3D12::GetHeapType(MemoryType memory)
 {
     switch (memory)
     {
-        case HeapMemory::DeviceLocal:
+        case MemoryType::DeviceLocal:
             return D3D12_HEAP_TYPE_DEFAULT;
-        case HeapMemory::HostVisible:
+        case MemoryType::HostVisible:
             return D3D12_HEAP_TYPE_GPU_UPLOAD;
     }
     return D3D12_HEAP_TYPE_DEFAULT;
@@ -521,6 +505,12 @@ D3D12_BARRIER_SYNC RM::D3D12::GetBarrierSync(BarrierStage stage)
     return sync;
 }
 
+D3D12_BARRIER_LAYOUT RM::D3D12::GetBarrierLayout(BarrierLayout layout)
+{
+    if (layout == BarrierLayout::Present) return D3D12_BARRIER_LAYOUT_PRESENT;
+    return static_cast<D3D12_BARRIER_LAYOUT>(static_cast<uint32_t>(layout));
+}
+
 D3D12_BARRIER_TYPE RM::D3D12::GetBarrierType(BarrierType type)
 {
     switch (type)
@@ -616,11 +606,8 @@ D3D12_TEXTURE_BARRIER RM::D3D12::ConvertBarrier(const TextureBarrier& src)
     D3D12_TEXTURE_BARRIER dst{};
     FillScope(dst, src);
 
-    dst.LayoutBefore = static_cast<D3D12_BARRIER_LAYOUT>(
-        static_cast<uint32_t>(src.layout_before));
-
-    dst.LayoutAfter = static_cast<D3D12_BARRIER_LAYOUT>(
-        static_cast<uint32_t>(src.layout_after));
+    dst.LayoutBefore = GetBarrierLayout(src.layout_before);
+    dst.LayoutAfter = GetBarrierLayout(src.layout_after);
 
     dst.pResource = static_cast<ID3D12Resource*>(src.texture->GetNativeHandle());
 

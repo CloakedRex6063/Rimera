@@ -37,6 +37,16 @@ void RM::Buffer::Unmap()
     }
 }
 
+bool RM::Buffer::IsHostVisible() const
+{
+    D3D12_HEAP_PROPERTIES properties{};
+    if (FAILED(m_buffer->GetHeapProperties(&properties, nullptr))) return false;
+    if (properties.Type == D3D12_HEAP_TYPE_DEFAULT) return false;
+    if (properties.Type == D3D12_HEAP_TYPE_CUSTOM)
+        return properties.CPUPageProperty != D3D12_CPU_PAGE_PROPERTY_NOT_AVAILABLE;
+    return true;
+}
+
 uint64_t RM::Buffer::GetGPUAddress() const
 {
     return m_buffer->GetGPUVirtualAddress();
@@ -55,12 +65,17 @@ RM::Result<void> RM::Buffer::Initialize(Device* device, const BufferCreateInfo& 
         resource_info.Flags |= D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     }
 
-    constexpr D3D12MA::ALLOCATION_DESC alloc_desc = {
-        .HeapType = D3D12_HEAP_TYPE_GPU_UPLOAD,
-    };
+    D3D12_HEAP_TYPE heap_type = D3D12_HEAP_TYPE_DEFAULT;
+    if (m_device->m_gpu_upload_heap)
+        heap_type = D3D12_HEAP_TYPE_GPU_UPLOAD;
+    else if (info.memory_type == MemoryType::HostVisible)
+        heap_type = D3D12_HEAP_TYPE_UPLOAD;
+    const D3D12MA::ALLOCATION_DESC alloc_desc = {.HeapType = heap_type};
     const auto result = m_device->m_allocator->CreateResource(&alloc_desc,
                                                               &resource_info,
-                                                              D3D12_RESOURCE_STATE_COMMON,
+                                                              heap_type == D3D12_HEAP_TYPE_UPLOAD
+                                                                  ? D3D12_RESOURCE_STATE_GENERIC_READ
+                                                                  : D3D12_RESOURCE_STATE_COMMON,
                                                               nullptr,
                                                               &m_allocation,
                                                               IID_PPV_ARGS(&m_buffer));
@@ -68,13 +83,7 @@ RM::Result<void> RM::Buffer::Initialize(Device* device, const BufferCreateInfo& 
     {
         return std::unexpected("Failed to create buffer");
     }
-    if (info.data)
-    {
-        auto mapped = Map();
-        if (!mapped) return std::unexpected(mapped.error());
-        std::memcpy(*mapped, info.data, info.size);
-        Unmap();
-    }
+    if (auto result = WriteInitialData(info); !result) return result;
     auto descriptor = m_device->AddDescriptor(this);
     if (!descriptor) return std::unexpected(descriptor.error());
     m_resource_index = *descriptor;
@@ -89,8 +98,6 @@ RM::Result<void> RM::Buffer::Initialize(Device* device,
     m_device = device;
     if (!device || !heap || !info.size)
         return std::unexpected("Invalid buffer creation parameters");
-    if (info.data && heap->GetMemory() != HeapMemory::HostVisible)
-        return std::unexpected("Initial buffer data requires a host visible heap");
     m_length = info.size;
     m_flags = info.flags;
     m_heap = heap;
@@ -129,13 +136,7 @@ RM::Result<void> RM::Buffer::Initialize(Device* device,
     {
         return std::unexpected("Failed to create placed buffer");
     }
-    if (info.data)
-    {
-        auto mapped = Map();
-        if (!mapped) return std::unexpected(mapped.error());
-        std::memcpy(*mapped, info.data, info.size);
-        Unmap();
-    }
+    if (auto result = WriteInitialData(info); !result) return result;
     auto descriptor = m_device->AddDescriptor(this);
     if (!descriptor) return std::unexpected(descriptor.error());
     m_resource_index = *descriptor;

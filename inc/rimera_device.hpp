@@ -69,10 +69,10 @@ namespace RM
 
         [[nodiscard]] Result<ResourceAllocationInfo> GetAllocationInfo(
             const TextureCreateInfo& info,
-            HeapMemory memory = HeapMemory::DeviceLocal) const;
+            MemoryType memory = MemoryType::DeviceLocal) const;
         [[nodiscard]] Result<ResourceAllocationInfo> GetAllocationInfo(
             const BufferCreateInfo& info,
-            HeapMemory memory = HeapMemory::DeviceLocal) const;
+            MemoryType memory = MemoryType::DeviceLocal) const;
 
         [[nodiscard]] TextureCopyFootprint GetCopyFootprint(const Texture* texture,
                                                             uint32_t mip_level = 0) const;
@@ -113,7 +113,19 @@ namespace RM
                                  }});
         }
 
-        [[nodiscard]] Result<void> NewFrame(Queue* queue);
+        [[nodiscard]] Result<void> NewFrame();
+        [[nodiscard]] FenceOp GetFrameSignal() const;
+
+        [[nodiscard]] static constexpr BackendType GetBackendType() noexcept
+        {
+#ifdef RIMERA_METAL
+            return BackendType::Metal;
+#elifdef RIMERA_D3D12
+            return BackendType::D3D12;
+#elifdef RIMERA_VULKAN
+            return BackendType::Vulkan;
+#endif
+        }
         [[nodiscard]] const Fence* GetFrameFence() const noexcept { return m_frame_fence; }
 
         [[nodiscard]] void* GetNativeHandle() const;
@@ -122,10 +134,11 @@ namespace RM
         Device() = default;
         friend Result<Device*> CreateDevice(const DeviceCreateInfo& info);
         [[nodiscard]] Result<void> Initialize(const DeviceCreateInfo& info);
+
         template <typename T, typename... Args>
         [[nodiscard]] static Result<T*> CreateObject(Args&&... args)
         {
-            auto* object = new (std::nothrow) T();
+            auto* object = new(std::nothrow) T();
             if (!object) return std::unexpected("Object allocation failed");
             auto result = object->Initialize(std::forward<Args>(args)...);
             if (!result)
@@ -136,6 +149,7 @@ namespace RM
             }
             return object;
         }
+
         struct RetiredObject
         {
             const void* object = nullptr;
@@ -165,6 +179,9 @@ namespace RM
         std::unordered_map<Format, Pipeline*> m_blit_pipelines;
 
         [[nodiscard]] Result<void> UploadTexture(Texture* texture, const void* data);
+        [[nodiscard]] Result<void> UploadBuffer(Buffer* buffer, const void* data);
+        [[nodiscard]] Result<void> EnsureUploadObjects();
+        [[nodiscard]] Result<void> SubmitUpload();
 
         [[nodiscard]] Result<uint32_t> AddDescriptor(const Buffer* buffer);
         [[nodiscard]] Result<uint32_t> AddDescriptor(Sampler* sampler);
@@ -240,6 +257,66 @@ namespace RM
         ComPtr<ID3D12InfoQueue1> m_info_queue;
         DWORD m_callback_cookie = 0;
         bool m_callback_registered = false;
+        bool m_gpu_upload_heap = false;
+#elifdef RIMERA_VULKAN
+        friend class Pipeline;
+
+        struct QueueFamily
+        {
+            uint32_t index = VK_QUEUE_FAMILY_IGNORED;
+            uint32_t count = 0;
+            uint32_t next = 0;
+        };
+
+        VkInstance m_instance = VK_NULL_HANDLE;
+        VkDebugUtilsMessengerEXT m_debug_messenger = VK_NULL_HANDLE;
+        VkPhysicalDevice m_physical_device = VK_NULL_HANDLE;
+        VkDevice m_device = VK_NULL_HANDLE;
+        VmaAllocator m_allocator = VK_NULL_HANDLE;
+        std::array<QueueFamily, 3> m_queue_families{};
+        std::vector<uint32_t> m_unique_queue_families;
+
+        struct DescriptorHeap
+        {
+            VkBuffer buffer = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            uint8_t* data = nullptr;
+            VkDeviceAddress address = 0;
+            uint64_t stride = 0;
+            uint64_t size = 0;
+            uint64_t reserved_offset = 0;
+            uint64_t reserved_size = 0;
+            uint32_t count = 0;
+            uint32_t index = 0;
+            std::vector<uint32_t> free_descriptors;
+        };
+
+        [[nodiscard]] Result<DescriptorHeap> CreateDescriptorHeap(uint32_t count,
+            uint64_t stride,
+            uint64_t alignment,
+            uint64_t reserved_size);
+        void DestroyDescriptorHeap(DescriptorHeap& heap);
+        [[nodiscard]] Result<uint32_t> AllocateDescriptor(DescriptorHeap& heap);
+        [[nodiscard]] Result<uint32_t> AddDescriptor(const Texture* texture, TextureViewType type);
+        void WriteSamplerDescriptor(uint32_t index, const VkSamplerCreateInfo& info);
+        void FlushDescriptor(const DescriptorHeap& heap, uint32_t index) const;
+        DescriptorHeap m_resource_heap;
+        DescriptorHeap m_sampler_heap;
+        VkPhysicalDeviceDescriptorHeapPropertiesEXT m_heap_properties{};
+        std::array<VkDescriptorSetAndBindingMappingEXT, 6> m_mappings{};
+        VkShaderDescriptorSetAndBindingMappingInfoEXT m_mapping_info{};
+        bool m_unified_image_layouts = false;
+        bool m_gpu_upload_heap = false;
+        bool m_memory_priority = false;
+        bool m_hdr_metadata = false;
+        bool m_swapchain_colorspace = false;
+
+        [[nodiscard]] bool SupportsHostImageTransfer(Format format) const;
+        [[nodiscard]] Result<void> TransitionImageLayout(VkImage image,
+                                                         VkImageAspectFlags aspect,
+                                                         uint32_t mip_levels,
+                                                         uint32_t layer_count,
+                                                         VkImageLayout layout);
 #endif
     };
 } // namespace RM

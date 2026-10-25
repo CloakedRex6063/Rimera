@@ -17,12 +17,13 @@ namespace RM::D3D12
     D3D12_COMMAND_LIST_TYPE GetQueueType(QueueType type);
     D3D12_RESOURCE_DESC GetResourceDesc(const BufferCreateInfo& info);
     D3D12_RESOURCE_DESC GetResourceDesc(const TextureCreateInfo& info);
-    D3D12_HEAP_TYPE GetHeapType(HeapMemory memory);
+    D3D12_HEAP_TYPE GetHeapType(MemoryType memory);
     DXGI_FORMAT GetFormat(const Format& format);
     Format GetFormat(const DXGI_FORMAT& format);
     D3D12_BARRIER_ACCESS GetBarrierAccess(BarrierAccess access);
     D3D12_BARRIER_SYNC GetBarrierSync(BarrierStage stage);
     D3D12_BARRIER_TYPE GetBarrierType(BarrierType type);
+    D3D12_BARRIER_LAYOUT GetBarrierLayout(BarrierLayout layout);
 
     D3D12_RENDER_PASS_BEGINNING_ACCESS ToBeginAccess(Format format,
                                                      LoadOp load_op,

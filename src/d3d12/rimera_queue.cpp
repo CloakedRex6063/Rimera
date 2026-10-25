@@ -56,7 +56,7 @@ void RM::Queue::RemoveResidencySet(ResidencySet* residency_set)
     residency_set->UntrackQueue(this);
 }
 
-RM::Result<void> RM::Queue::Signal(Fence* fence, uint64_t value) const
+RM::Result<void> RM::Queue::SignalFence(Fence* fence, uint64_t value)
 {
     auto* native_fence = static_cast<ID3D12Fence*>(fence->GetNativeHandle());
     if (FAILED(m_queue->Signal(native_fence, value)))
@@ -65,12 +65,25 @@ RM::Result<void> RM::Queue::Signal(Fence* fence, uint64_t value) const
     return {};
 }
 
-void RM::Queue::Submit(const Command* command) const
+RM::Result<void> RM::Queue::Submit(const SubmitInfo& info)
 {
     for (auto* residency_set : m_residency_sets) residency_set->Commit();
-    auto* native_command = static_cast<ID3D12CommandList*>(command->GetNativeCommand());
-    m_queue->ExecuteCommandLists(1, &native_command);
-    static_cast<void>(Signal(m_fence));
+    for (const auto& wait : info.waits)
+    {
+        auto* native_fence = static_cast<ID3D12Fence*>(wait.fence->GetNativeHandle());
+        if (FAILED(m_queue->Wait(native_fence, wait.value)))
+            return std::unexpected("Failed to wait for fence on queue");
+    }
+    std::vector<ID3D12CommandList*> lists;
+    lists.reserve(info.commands.size());
+    for (const auto* command : info.commands)
+        lists.push_back(static_cast<ID3D12CommandList*>(command->GetNativeCommand()));
+    if (!lists.empty()) m_queue->ExecuteCommandLists(static_cast<UINT>(lists.size()), lists.data());
+    for (const auto& signal : info.signals)
+    {
+        if (auto result = SignalFence(signal.fence, signal.value); !result) return result;
+    }
+    return SignalFence(m_fence, m_fence->m_value + 1);
 }
 
 void* RM::Queue::GetNativeHandle() const

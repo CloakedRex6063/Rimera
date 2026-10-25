@@ -617,7 +617,7 @@ RM::Result<void> RM::RenderGraph::EnsureHeap(uint64_t size)
     ReleaseTransientMemory();
 
     auto heap = m_device->CreateHeap({.size = AlignUp(size, m_info.heap_granularity),
-                                      .memory = HeapMemory::DeviceLocal});
+                                      .memory = MemoryType::DeviceLocal});
     if (!heap) return std::unexpected("Render graph: " + heap.error());
     m_heap = *heap;
     return {};

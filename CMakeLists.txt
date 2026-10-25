@@ -23,7 +23,9 @@ elseif (RIMERA_BACKEND STREQUAL "Metal")
     endif ()
     enable_language(OBJCXX)
 elseif (RIMERA_BACKEND STREQUAL "Vulkan")
-    message(FATAL_ERROR "The Vulkan backend is not implemented yet")
+    if (APPLE)
+        message(FATAL_ERROR "The Vulkan backend is not supported on macOS")
+    endif ()
 else ()
     message(FATAL_ERROR "Unknown RIMERA_BACKEND '${RIMERA_BACKEND}', expected D3D12, Metal or Vulkan")
 endif ()
@@ -35,6 +37,18 @@ function(rimera_disable_exceptions target)
     else ()
         target_compile_options(${target} PRIVATE -fno-exceptions)
     endif ()
+endfunction()
+
+set(RIMERA_SHADER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+
+function(rimera_copy_shaders target destination)
+    file(GLOB rimera_shader_files CONFIGURE_DEPENDS ${RIMERA_SHADER_DIR}/*.hlsl)
+    add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${rimera_shader_files}
+            "${destination}"
+            VERBATIM)
+    set_property(TARGET ${target} APPEND PROPERTY LINK_DEPENDS ${rimera_shader_files})
 endfunction()
 
 add_library(Rimera STATIC
@@ -63,6 +77,7 @@ add_library(Rimera STATIC
         src/rimera_device_common.cpp
         src/rimera_queue_common.cpp
         src/rimera_residency_common.cpp
+        src/rimera_buffer_common.cpp
 )
 rimera_disable_exceptions(Rimera)
 target_compile_definitions(Rimera PUBLIC
@@ -115,7 +130,24 @@ elseif (RIMERA_BACKEND STREQUAL "D3D12")
             src/d3d12/rimera_sampler.cpp
             src/d3d12/rimera_heap.cpp
             src/d3d12/rimera_d3d12.cpp)
-    set_source_files_properties(src/d3d12/rimera_d3d12.cpp
+elseif (RIMERA_BACKEND STREQUAL "Vulkan")
+    target_compile_definitions(Rimera PUBLIC RIMERA_VULKAN)
+    target_sources(Rimera
+            PRIVATE
+            src/vulkan/rimera_vulkan.hpp
+            src/vulkan/rimera_vulkan.cpp
+            src/vulkan/rimera_vma.cpp
+            src/vulkan/rimera_shader.cpp
+            src/vulkan/rimera_sampler.cpp
+            src/vulkan/rimera_texture.cpp
+            src/vulkan/rimera_buffer.cpp
+            src/vulkan/rimera_heap.cpp
+            src/vulkan/rimera_swapchain.cpp
+            src/vulkan/rimera_device.cpp
+            src/vulkan/rimera_queue.cpp
+            src/vulkan/rimera_residency.cpp
+            src/vulkan/rimera_command.cpp)
+    set_source_files_properties(src/vulkan/rimera_vma.cpp
             PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 endif ()
 

@@ -57,7 +57,7 @@ void RM::Queue::RemoveResidencySet(ResidencySet* residency_set)
     m_queue->removeResidencySet(static_cast<MTL::ResidencySet*>(residency_set->GetNative()));
 }
 
-RM::Result<void> RM::Queue::Signal(Fence* fence, uint64_t value) const
+RM::Result<void> RM::Queue::SignalFence(Fence* fence, uint64_t value)
 {
     m_queue->signalEvent(static_cast<MTL::Event*>(fence->GetNativeHandle()), value);
     fence->m_value = std::max(fence->m_value, value);
@@ -69,13 +69,21 @@ void* RM::Queue::GetNativeHandle() const
     return m_queue.get();
 }
 
-void RM::Queue::Submit(const Command* command) const
+RM::Result<void> RM::Queue::Submit(const SubmitInfo& info)
 {
     for (auto* residency_set : m_residency_sets) residency_set->Commit();
-    MTL4::CommandBuffer* buffers[] = {
-        static_cast<MTL4::CommandBuffer*>(command->GetNativeCommand())};
-    m_queue->commit(buffers, 1);
-    static_cast<void>(Signal(m_fence));
+    for (const auto& wait : info.waits)
+        m_queue->wait(static_cast<MTL::Event*>(wait.fence->GetNativeHandle()), wait.value);
+    std::vector<MTL4::CommandBuffer*> buffers;
+    buffers.reserve(info.commands.size());
+    for (const auto* command : info.commands)
+        buffers.push_back(static_cast<MTL4::CommandBuffer*>(command->GetNativeCommand()));
+    if (!buffers.empty()) m_queue->commit(buffers.data(), buffers.size());
+    for (const auto& signal : info.signals)
+    {
+        if (auto result = SignalFence(signal.fence, signal.value); !result) return result;
+    }
+    return SignalFence(m_fence, m_fence->m_value + 1);
 }
 
 void RM::Queue::AddResidencySet(const MTL::ResidencySet* residency_set) const

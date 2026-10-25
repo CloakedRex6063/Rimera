@@ -143,7 +143,7 @@ namespace RM
         {
         }
 
-        TextureBuilder& Format(RM::Format format)
+        TextureBuilder& Format(Format format)
         {
             m_value.format = format;
             return *this;
@@ -221,7 +221,7 @@ namespace RM
             m_value.size = size;
         }
 
-        HeapBuilder& Memory(HeapMemory memory)
+        HeapBuilder& Memory(MemoryType memory)
         {
             m_value.memory = memory;
             return *this;
@@ -600,5 +600,64 @@ namespace RM
 
     private:
         GraphicsPipelineCreateInfo m_value{};
+    };
+    class SubmitBuilder
+    {
+    public:
+        SubmitBuilder& Execute(const Command* command)
+        {
+            m_commands.push_back(command);
+            return *this;
+        }
+
+        SubmitBuilder& Wait(Fence* fence, uint64_t value)
+        {
+            m_waits.push_back({fence, value});
+            return *this;
+        }
+
+        SubmitBuilder& Wait(FenceOp operation)
+        {
+            m_waits.push_back(operation);
+            return *this;
+        }
+
+        SubmitBuilder& Signal(Fence* fence, uint64_t value)
+        {
+            m_signals.push_back({fence, value});
+            return *this;
+        }
+
+        SubmitBuilder& Signal(FenceOp operation)
+        {
+            m_signals.push_back(operation);
+            return *this;
+        }
+
+        SubmitBuilder& Present(Swapchain* swapchain)
+        {
+            m_swapchains.push_back(swapchain);
+            return *this;
+        }
+
+        SubmitBuilder& Present(std::span<Swapchain* const> swapchains)
+        {
+            m_swapchains.insert(m_swapchains.end(), swapchains.begin(), swapchains.end());
+            return *this;
+        }
+
+        [[nodiscard]] SubmitInfo Build() const
+        {
+            return {.commands = m_commands,
+                    .waits = m_waits,
+                    .signals = m_signals,
+                    .swapchains = m_swapchains};
+        }
+
+    private:
+        std::vector<const Command*> m_commands;
+        std::vector<FenceOp> m_waits;
+        std::vector<FenceOp> m_signals;
+        std::vector<Swapchain*> m_swapchains;
     };
 }

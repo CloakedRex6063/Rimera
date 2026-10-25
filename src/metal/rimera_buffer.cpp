@@ -43,8 +43,6 @@ RM::Result<void> RM::Buffer::Initialize(Device* device,
     m_device = device;
     if (!device || !heap || !info.size)
         return std::unexpected("Invalid buffer creation parameters");
-    if (info.data && heap->GetMemory() != HeapMemory::HostVisible)
-        return std::unexpected("Initial buffer data requires a host visible heap");
     m_length = info.size;
     m_flags = info.flags;
     m_heap = heap;

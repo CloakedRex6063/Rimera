@@ -23,6 +23,7 @@ function(copy_assets dest)
             "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/shaders"
             "${shader_destination}"
             VERBATIM)
+    rimera_copy_shaders(${dest} "${shader_destination}")
     set_property(TARGET ${dest} APPEND PROPERTY LINK_DEPENDS ${RIMERA_SHADER_FILES})
     
     target_sources(${dest} PRIVATE ${RIMERA_SHADER_FILES})

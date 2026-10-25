@@ -41,7 +41,7 @@ namespace RM
         {
 #ifdef RIMERA_METAL
             return m_resource_index;
-#elifdef RIMERA_D3D12
+#elif defined(RIMERA_D3D12) || defined(RIMERA_VULKAN)
             return m_descriptors[static_cast<uint32_t>(type)];
 #endif
         }
@@ -82,6 +82,38 @@ namespace RM
         [[nodiscard]] Result<void> CreateDescriptors();
         ComPtr<D3D12MA::Allocation> m_allocation;
         ComPtr<ID3D12Resource> m_texture;
+        std::array<uint32_t, 4> m_descriptors{UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
+#elifdef RIMERA_VULKAN
+        struct ImageStorage
+        {
+            ImageStorage() = default;
+            ImageStorage(const ImageStorage&) = delete;
+            ImageStorage& operator=(const ImageStorage&) = delete;
+            ~ImageStorage();
+            VkDevice device = VK_NULL_HANDLE;
+            VmaAllocator allocator = VK_NULL_HANDLE;
+            VkImage image = VK_NULL_HANDLE;
+            VmaAllocation allocation = VK_NULL_HANDLE;
+            bool owned = true;
+            uint32_t width = 0;
+            uint32_t height = 0;
+            uint32_t mip_levels = 1;
+            uint32_t array_layers = 1;
+        };
+
+        [[nodiscard]] Result<void> Initialize(Device* device,
+                                              VkImage image,
+                                              uint32_t width,
+                                              uint32_t height,
+                                              EnumFlags<TextureUsage> usage,
+                                              Format format);
+        [[nodiscard]] Result<void> CreateImage(const TextureCreateInfo& info, Heap* heap, uint64_t offset);
+        [[nodiscard]] VkImageViewCreateInfo GetViewCreateInfo(TextureViewType type) const;
+        friend class Command;
+        [[nodiscard]] Result<void> CreateViews();
+        bool m_owns_image = false;
+        ImageStorage* m_image = nullptr;
+        VkImageView m_attachment_view = VK_NULL_HANDLE;
         std::array<uint32_t, 4> m_descriptors{UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX};
 #endif
     };

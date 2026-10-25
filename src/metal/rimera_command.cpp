@@ -111,6 +111,7 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
     }
 
     m_render_encoder = m_command_buffer->renderCommandEncoder(rpd.get());
+    m_stencil_reference = 0;
     
     for (auto& barrier : m_pending_barriers)
     {
@@ -254,7 +255,7 @@ RM::Result<void> RM::Command::BindShader(const Pipeline* shader)
             m_render_encoder->setDepthClipMode(rasterizer.depth_clip_enable
                                                    ? MTL::DepthClipModeClip
                                                    : MTL::DepthClipModeClamp);
-            m_render_encoder->setStencilReferenceValue(0);
+            m_render_encoder->setStencilReferenceValue(m_stencil_reference);
             m_render_encoder->setBlendColor(0, 0, 0, 0);
             break;
         }
@@ -668,4 +669,10 @@ RM::CommandRing::~CommandRing()
     {
         delete command;
     }
+}
+
+void RM::Command::SetStencilReference(uint32_t reference)
+{
+    m_stencil_reference = reference;
+    if (m_render_encoder) m_render_encoder->setStencilReferenceValue(reference);
 }

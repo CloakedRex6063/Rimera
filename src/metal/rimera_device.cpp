@@ -61,21 +61,6 @@ RM::Device::~Device()
     if (m_root_sig) IRRootSignatureDestroy(m_root_sig);
 }
 
-RM::Result<void> RM::Device::NewFrame(Queue* queue)
-{
-    auto value = queue->Signal(m_frame_fence);
-    if (!value) return std::unexpected(value.error());
-    m_frame_values[m_current_frame] = *value;
-    m_current_frame = (m_current_frame + 1) % m_frame_values.size();
-    if (auto result = m_frame_fence->Wait(m_frame_values[m_current_frame]); !result)
-        return result;
-    ReleaseRetired();
-
-    m_frame_pool.reset();
-    m_frame_pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
-    return {};
-}
-
 void* RM::Device::GetNativeHandle() const { return m_device.get(); }
 
 RM::Result<void> RM::Device::CreateRootSignature()
@@ -107,7 +92,7 @@ RM::Result<void> RM::Device::CreateRootSignature()
 
 RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
     const TextureCreateInfo& info,
-    HeapMemory memory) const
+    MemoryType memory) const
 {
     if (auto result = Texture::ValidateCreateInfo(info); !result)
         return std::unexpected(result.error());
@@ -120,11 +105,11 @@ RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
 
 RM::Result<RM::ResourceAllocationInfo> RM::Device::GetAllocationInfo(
     const BufferCreateInfo& info,
-    HeapMemory memory) const
+    MemoryType memory) const
 {
     if (!info.size) return std::unexpected("Invalid buffer creation parameters");
     const MTL::ResourceOptions options =
-        (memory == HeapMemory::HostVisible
+        (memory == MemoryType::HostVisible
              ? MTL::ResourceStorageModeShared
              : MTL::ResourceStorageModePrivate) |
         MTL::ResourceHazardTrackingModeUntracked;

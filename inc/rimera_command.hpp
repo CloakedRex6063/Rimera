@@ -65,6 +65,7 @@ namespace RM
         void SetViewport(const Viewport& viewport) const;
         void SetScissor(const Rect& rect) const;
         void SetPrimitiveTopology(PrimitiveTopology topology);
+        void SetStencilReference(uint32_t reference);
 
         Result<void> CopyTexture(const Texture* source, const Texture* dest);
         Result<void> CopyBufferToTexture(const Buffer* source,
@@ -138,6 +139,7 @@ namespace RM
         DispatchGroup m_threads_per_ampl{};
         DispatchGroup m_threads_per_compute{};
         MTL::PrimitiveType m_primitive_type = MTL::PrimitiveTypeTriangle;
+        uint32_t m_stencil_reference = 0;
 
         struct PendingBarrier
         {
@@ -151,6 +153,12 @@ namespace RM
         bool m_in_compute_pass = false;
         ComPtr<ID3D12GraphicsCommandList10> m_command_buffer;
         ComPtr<ID3D12CommandAllocator> m_command_allocator;
+#elifdef RIMERA_VULKAN
+        VkCommandPool m_command_pool = VK_NULL_HANDLE;
+        VkCommandBuffer m_command_buffer = VK_NULL_HANDLE;
+        QueueType m_queue_type = QueueType::Graphics;
+        static constexpr uint32_t kPushDataSize =
+            kRootConstantCount * sizeof(uint32_t) + kConstantBufferSlotCount * sizeof(uint64_t);
 #endif
         BlitPassData* m_blit_data = nullptr;
         Sampler* m_sampler = nullptr;

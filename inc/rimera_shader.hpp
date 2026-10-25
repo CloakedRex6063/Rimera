@@ -11,6 +11,9 @@ namespace RM
     public:
         Pipeline(const Pipeline&) = delete;
         Pipeline& operator=(const Pipeline&) = delete;
+#ifdef RIMERA_VULKAN
+        ~Pipeline();
+#endif
         [[nodiscard]] void* GetNativeHandle() const;
 
 #ifdef RIMERA_METAL
@@ -59,6 +62,8 @@ namespace RM
         [[nodiscard]] static Result<std::vector<D3D12_INPUT_ELEMENT_DESC>> CreateInputLayout(
             std::span<const VertexBinding> bindings,
             std::span<const VertexAttribute> attributes);
+#elifdef RIMERA_VULKAN
+        VkPipeline m_pipeline = VK_NULL_HANDLE;
 #endif
     };
 } // namespace RM

@@ -31,7 +31,7 @@ namespace RM
 
         [[nodiscard]] uint64_t GetSize() const noexcept { return m_size; }
         [[nodiscard]] uint64_t GetUsedSize() const noexcept { return m_used; }
-        [[nodiscard]] HeapMemory GetMemory() const noexcept { return m_memory; }
+        [[nodiscard]] MemoryType GetMemory() const noexcept { return m_memory; }
         [[nodiscard]] void* GetNativeHandle() const;
 
     private:
@@ -54,13 +54,16 @@ namespace RM
 
         uint64_t m_size = 0;
         uint64_t m_used = 0;
-        HeapMemory m_memory = HeapMemory::DeviceLocal;
+        MemoryType m_memory = MemoryType::DeviceLocal;
         std::vector<Block> m_free_blocks;
         std::unordered_map<uint64_t, Block> m_allocations;
 #ifdef RIMERA_METAL
         NS::SharedPtr<MTL::Heap> m_heap;
 #elifdef RIMERA_D3D12
         ComPtr<ID3D12Heap> m_heap;
+#elifdef RIMERA_VULKAN
+        VmaAllocation m_allocation = VK_NULL_HANDLE;
+        void* m_mapped_data = nullptr;
 #endif
     };
 } // namespace RM

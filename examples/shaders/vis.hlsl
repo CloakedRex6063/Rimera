@@ -1,11 +1,12 @@
 #include "common.hlsl"
+#include "rimera.hlsl"
 
 struct MeshOutput
 {
     float4 position : SV_Position;
 };
 
-struct PrimOut { uint vis_id : VIS_ID; };
+struct PrimOut { PER_PRIMITIVE uint vis_id : VIS_ID; };
 
 [numthreads(64, 1, 1)]
 [outputtopology("triangle")]
@@ -50,7 +51,7 @@ void MSMain(uint group_index : SV_GroupIndex,
     }
 }
 
-uint PSMain(MeshOutput, PrimOut p) : SV_Target0
+MESH_FRAGMENT uint PSMain(MeshOutput, PrimOut p) : SV_Target0
 {
     return p.vis_id;
 }

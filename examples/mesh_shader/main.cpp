@@ -174,7 +174,9 @@ struct MeshShaderScene
         for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
             auto scene_buffer_result =
-                device->CreateBuffer({.size = sizeof(SceneData), .data = &scene_constants});
+                device->CreateBuffer({.size = sizeof(SceneData),
+                                      .data = &scene_constants,
+                                      .memory_type = RM::MemoryType::HostVisible});
             if (!scene_buffer_result) return std::unexpected(scene_buffer_result.error());
             scene_buffers[i] = *scene_buffer_result;
             auto mapped = scene_buffers[i]->Map();
@@ -282,6 +284,8 @@ struct MeshShaderScene
             device->DestroyImmediate(buffer);
         for (auto* buffer : scene_buffers) device->DestroyImmediate(buffer);
         if (vis_pipeline) device->DestroyImmediate(vis_pipeline);
+        if (interp_pipeline) device->DestroyImmediate(interp_pipeline);
+        if (shading_pipeline) device->DestroyImmediate(shading_pipeline);
         if (debug_pipeline) device->DestroyImmediate(debug_pipeline);
         if (tonemap_pipeline) device->DestroyImmediate(tonemap_pipeline);
         if (sampler) device->DestroyImmediate(sampler);
@@ -446,7 +450,7 @@ int main()
         const RM::DisplayInfo display_info = swapchain->GetDisplayInfo();
         imgui->SetDisplayInfo(display_info);
 
-        if (auto result = device->NewFrame(queue); !result)
+        if (auto result = device->NewFrame(); !result)
         {
             std::cerr << result.error() << '\n';
             exit_code = 1;
@@ -607,7 +611,19 @@ int main()
 
         command->End();
 
-        queue->Submit(command);
+        std::vector swapchains{swapchain};
+        imgui->GetAcquiredSwapchains(swapchains);
+        if (auto result = queue->Submit(RM::SubmitBuilder()
+                                        .Execute(command)
+                                        .Signal(device->GetFrameSignal())
+                                        .Present(swapchains)
+                                        .Build());
+            !result)
+        {
+            std::cerr << result.error() << '\n';
+            exit_code = 1;
+            break;
+        }
 
         if (auto result = swapchain->Present(); !result)
         {

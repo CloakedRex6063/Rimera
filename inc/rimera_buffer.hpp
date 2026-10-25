@@ -25,6 +25,12 @@ namespace RM
 
     private:
         Buffer() = default;
+#ifdef RIMERA_METAL
+        [[nodiscard]] bool IsHostVisible() const { return true; }
+#else
+        [[nodiscard]] bool IsHostVisible() const;
+#endif
+        [[nodiscard]] Result<void> WriteInitialData(const BufferCreateInfo& info);
         [[nodiscard]] Result<void> Initialize(Device* device, const BufferCreateInfo& info);
         [[nodiscard]] Result<void> Initialize(Device* device,
                                               Heap* heap,
@@ -45,6 +51,10 @@ namespace RM
 #elifdef RIMERA_D3D12
         ComPtr<ID3D12Resource> m_buffer;
         ComPtr<D3D12MA::Allocation> m_allocation = nullptr;
+#elifdef RIMERA_VULKAN
+        [[nodiscard]] Result<void> AddResourceDescriptor();
+        VkBuffer m_buffer = VK_NULL_HANDLE;
+        VmaAllocation m_allocation = VK_NULL_HANDLE;
 #endif
     };
 } // namespace RM

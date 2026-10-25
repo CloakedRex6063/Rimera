@@ -1,17 +1,14 @@
 #include "rimera_queue.hpp"
 
-RM::Result<uint64_t> RM::Queue::Signal(Fence* fence) const
+RM::Result<void> RM::Queue::WaitIdle()
 {
-    const uint64_t value = fence->m_value + 1;
-    if (auto result = Signal(fence, value); !result) return std::unexpected(result.error());
-    return value;
+    if (auto result = Submit(SubmitInfo{}); !result) return result;
+    return m_fence->Wait();
 }
 
-RM::Result<void> RM::Queue::WaitIdle() const
+void RM::Queue::Submit(const Command* command)
 {
-    auto value = Signal(m_fence);
-    if (!value) return std::unexpected(value.error());
-    return m_fence->Wait(*value);
+    static_cast<void>(Submit(SubmitInfo{.commands = std::span<const Command* const>(&command, 1)}));
 }
 
 bool RM::Queue::IsBusySince(uint64_t value) const

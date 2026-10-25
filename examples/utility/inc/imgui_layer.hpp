@@ -47,6 +47,7 @@ public:
     void SetDisplayInfo(const RM::DisplayInfo& info) { m_display_info = info; }
     void AddPass(RM::RenderGraph* graph, RM::GraphTexture target);
     void Present();
+    void GetAcquiredSwapchains(std::vector<RM::Swapchain*>& swapchains) const;
 
     [[nodiscard]] uint64_t GetTextureID(const RM::Texture* texture) const;
     [[nodiscard]] uint64_t GetTextureID(RM::GraphTexture texture);

@@ -125,6 +125,20 @@ RM::Result<void> RM::Compiler::Initialize(const CompilerCreateInfo& info)
     data.arguments.push_back(L"-HV");
     data.arguments.push_back(std::to_wstring(info.hlsl_version));
     if (info.enable_16bit_types) data.arguments.push_back(L"-enable-16bit-types");
+#ifdef RIMERA_VULKAN
+    for (const auto* argument : {L"-spirv",
+                                 L"-fspv-target-env=vulkan1.3",
+                                 L"-fvk-use-dx-layout",
+                                 L"-fvk-bind-resource-heap",
+                                 L"0",
+                                 L"1",
+                                 L"-fvk-bind-sampler-heap",
+                                 L"0",
+                                 L"2",
+                                 L"-fspv-extension=SPV_EXT_mesh_shader",
+                                 L"-fspv-extension=SPV_EXT_descriptor_indexing"})
+        data.arguments.push_back(argument);
+#endif
 
     for (const auto path : info.include_paths)
     {

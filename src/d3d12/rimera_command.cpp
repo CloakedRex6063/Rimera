@@ -79,6 +79,7 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
                                       render_target_descriptors.data(),
                                       depth_desc,
                                       D3D12_RENDER_PASS_FLAG_NONE);
+    m_command_buffer->OMSetStencilRef(0);
 }
 
 void RM::Command::EndRenderPass()
@@ -530,6 +531,7 @@ RM::Result<void> RM::Command::Initialize(Device* device, QueueType queue_type)
     auto blit_buffer_result = device->CreateBuffer({
         .size = sizeof(BlitPassData),
         .data = nullptr,
+        .memory_type = MemoryType::HostVisible,
         .flags = BufferFlags::eUnorderedAccess,
     });
     if (!blit_buffer_result) return std::unexpected(blit_buffer_result.error());
@@ -575,4 +577,9 @@ RM::CommandRing::~CommandRing()
     {
         delete command;
     }
+}
+
+void RM::Command::SetStencilReference(uint32_t reference)
+{
+    m_command_buffer->OMSetStencilRef(reference);
 }

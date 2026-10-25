@@ -135,6 +135,7 @@ RM::Result<void> Mesh::Initialize(RM::Device* device,
     return {};
 }
 
+// Currently broken on devices that don't support GPU-Upload
 RM::Result<RM::Buffer*> Mesh::GenerateIndexBuffer() const
 {
     auto meshlets_mapped = m_meshlet_buffer->Map();

@@ -28,6 +28,8 @@ namespace RM
         NS::SharedPtr<MTL::SharedEvent> m_event;
 #elifdef RIMERA_D3D12
         ComPtr<ID3D12Fence> m_fence;
+#elifdef RIMERA_VULKAN
+        VkSemaphore m_semaphore = VK_NULL_HANDLE;
 #endif
     };
 
@@ -40,10 +42,9 @@ namespace RM
 
         void AddResidencySet(ResidencySet* residency_set);
         void RemoveResidencySet(ResidencySet* residency_set);
-        [[nodiscard]] Result<void> WaitIdle() const;
-        [[nodiscard]] Result<void> Signal(Fence* fence, uint64_t value) const;
-        [[nodiscard]] Result<uint64_t> Signal(Fence* fence) const;
-        void Submit(const Command* command) const;
+        [[nodiscard]] Result<void> WaitIdle();
+        [[nodiscard]] Result<void> Submit(const SubmitInfo& info);
+        void Submit(const Command* command);
 
         [[nodiscard]] const Fence* GetFence() const noexcept { return m_fence; }
         void* GetNativeHandle() const;
@@ -53,10 +54,16 @@ namespace RM
 #ifdef RIMERA_METAL
         void AddResidencySet(const MTL::ResidencySet* residency_set) const;
         void RemoveResidencySet(const MTL::ResidencySet* residency_set) const;
+        [[nodiscard]] Result<void> SignalFence(Fence* fence, uint64_t value);
         NS::SharedPtr<MTL4::CommandQueue> m_queue;
         friend class Swapchain;
 #elifdef RIMERA_D3D12
+        [[nodiscard]] Result<void> SignalFence(Fence* fence, uint64_t value);
         ComPtr<ID3D12CommandQueue> m_queue;
+#elifdef RIMERA_VULKAN
+        friend class Swapchain;
+        VkQueue m_queue = VK_NULL_HANDLE;
+        uint32_t m_family = VK_QUEUE_FAMILY_IGNORED;
 #endif
         friend class Device;
         friend class Resident;
