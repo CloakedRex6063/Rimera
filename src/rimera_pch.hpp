@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
 #include "Metal/Metal.hpp"
 #include "Metal/MTL4AccelerationStructure.hpp"
 #include "QuartzCore/QuartzCore.hpp"
@@ -12,7 +12,7 @@
 #include "Foundation/Foundation.h"
 #include "AppKit/AppKit.h"
 #endif
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
 #include "lean_windows.hpp"
 #include "wrl/client.h"
 using namespace Microsoft::WRL;

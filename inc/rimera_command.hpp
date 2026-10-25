@@ -107,7 +107,7 @@ namespace RM
         };
 
         IndexBufferBinding m_index_buffer{};
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         NS::SharedPtr<MTL4::CommandBuffer> m_command_buffer;
         NS::SharedPtr<MTL4::CommandAllocator> m_command_allocator;
         NS::SharedPtr<MTL4::ArgumentTable> m_vertex_arg_table;
@@ -147,7 +147,7 @@ namespace RM
 
         std::vector<PendingBarrier> m_pending_barriers;
 
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         bool m_in_compute_pass = false;
         ComPtr<ID3D12GraphicsCommandList10> m_command_buffer;
         ComPtr<ID3D12CommandAllocator> m_command_allocator;

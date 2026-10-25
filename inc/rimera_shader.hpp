@@ -13,7 +13,7 @@ namespace RM
         Pipeline& operator=(const Pipeline&) = delete;
         [[nodiscard]] void* GetNativeHandle() const;
 
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         [[nodiscard]] DispatchGroup GetComputeThreadsPerThreadgroup() const
         {
             return m_compute_dispatch_group;
@@ -42,7 +42,7 @@ namespace RM
 
         Device* m_device = nullptr;
         PipelineType m_type;
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         friend class Command;
         NS::SharedPtr<MTL::DepthStencilState> m_depth_stencil_state;
         RasterizerState m_rasterizer_state{};
@@ -54,7 +54,7 @@ namespace RM
         DispatchGroup m_compute_dispatch_group{};
         DispatchGroup m_mesh_dispatch_group{};
         DispatchGroup m_ampl_dispatch_group{};
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         ComPtr<ID3D12PipelineState> m_pso;
         [[nodiscard]] static Result<std::vector<D3D12_INPUT_ELEMENT_DESC>> CreateInputLayout(
             std::span<const VertexBinding> bindings,

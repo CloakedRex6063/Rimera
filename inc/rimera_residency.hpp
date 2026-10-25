@@ -83,11 +83,11 @@ namespace RM
 #ifdef RIMERA_DEBUG
         void ValidateIdle() const;
 #endif
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         void AddAllocation(const MTL::Allocation* allocation);
         void RemoveAllocation(const MTL::Allocation* allocation);
         NS::SharedPtr<MTL::ResidencySet> m_residency_set;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         std::vector<ID3D12Pageable*> m_resources;
 #endif
         friend class Device;

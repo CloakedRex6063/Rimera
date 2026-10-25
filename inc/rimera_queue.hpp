@@ -24,9 +24,9 @@ namespace RM
         Device* m_device = nullptr;
         uint64_t m_value = 0;
         [[nodiscard]] Result<void> Initialize(Device* device);
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         NS::SharedPtr<MTL::SharedEvent> m_event;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         ComPtr<ID3D12Fence> m_fence;
 #endif
     };
@@ -50,12 +50,12 @@ namespace RM
 
     private:
         Queue() = default;
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         void AddResidencySet(const MTL::ResidencySet* residency_set) const;
         void RemoveResidencySet(const MTL::ResidencySet* residency_set) const;
         NS::SharedPtr<MTL4::CommandQueue> m_queue;
         friend class Swapchain;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         ComPtr<ID3D12CommandQueue> m_queue;
 #endif
         friend class Device;

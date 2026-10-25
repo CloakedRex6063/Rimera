@@ -11,7 +11,7 @@
 #include "rimera_swapchain.hpp"
 #include "rimera_texture.hpp"
 
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
 struct IRRootSignature;
 #endif
 
@@ -183,7 +183,7 @@ namespace RM
         friend class Resident;
         friend class ResidencySet;
 
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         [[nodiscard]] Result<uint32_t> AddDescriptor(const Texture* texture);
         NS::SharedPtr<MTL::Device> m_device;
         NS::SharedPtr<NS::AutoreleasePool> m_frame_pool;
@@ -196,7 +196,7 @@ namespace RM
 
         uint32_t m_current_sampler = 0;
         std::vector<uint32_t> m_free_samplers;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         struct DescriptorHeap
         {
             ComPtr<ID3D12DescriptorHeap> heap;

@@ -39,9 +39,9 @@ namespace RM
         }
         [[nodiscard]] uint32_t GetResourceIndex(TextureViewType type) const noexcept
         {
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
             return m_resource_index;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
             return m_descriptors[static_cast<uint32_t>(type)];
 #endif
         }
@@ -70,11 +70,11 @@ namespace RM
         Heap* m_heap = nullptr;
         uint64_t m_heap_offset = 0;
         bool m_heap_allocated = false;
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         [[nodiscard]] Result<void> Initialize(Device* device, MTL::Texture* texture);
         NS::SharedPtr<MTL::Texture> m_texture;
         uint32_t m_resource_index = UINT32_MAX;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         [[nodiscard]] Result<void> Initialize(Device* device,
                                               ID3D12Resource* resource,
                                               EnumFlags<TextureUsage> usage,

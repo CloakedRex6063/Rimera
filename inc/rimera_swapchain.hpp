@@ -31,12 +31,12 @@ namespace RM
         Device* m_device = nullptr;
         Queue* m_queue = nullptr;
         void* m_window = nullptr;
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         void DestroyTextures();
         NS::SharedPtr<CA::MetalLayer> m_swap_layer;
         CA::MetalDrawable* m_drawable = nullptr;
         std::unordered_map<uint64_t, Texture*> m_textures;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         [[nodiscard]] DisplayInfo QueryDisplayInfo() const;
         [[nodiscard]] Result<void> CreateTextures();
         void DestroyTextures();

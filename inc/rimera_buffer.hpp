@@ -40,9 +40,9 @@ namespace RM
         EnumFlags<BufferFlags> m_flags;
         void* m_data = nullptr;
         bool m_mapped = false;
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         NS::SharedPtr<MTL::Buffer> m_buffer;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         ComPtr<ID3D12Resource> m_buffer;
         ComPtr<D3D12MA::Allocation> m_allocation = nullptr;
 #endif

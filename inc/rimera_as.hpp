@@ -15,7 +15,7 @@ namespace RM
         BLAS() = default;
         friend class Device;
         [[nodiscard]] Result<void> Initialize(Device* device, const BLASCreateInfo& info);
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         NS::SharedPtr<MTL::AccelerationStructure> m_blas;
 #endif
     };
@@ -31,7 +31,7 @@ namespace RM
         TLAS() = default;
         friend class Device;
         [[nodiscard]] Result<void> Initialize(Device* device, const TLASCreateInfo& info);
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         NS::SharedPtr<MTL::Buffer> m_data_buffer;
         uint32_t scratch_offset = 0;
         NS::SharedPtr<MTL::AccelerationStructure> m_tlas;

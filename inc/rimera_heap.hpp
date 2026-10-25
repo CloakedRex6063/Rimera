@@ -57,9 +57,9 @@ namespace RM
         HeapMemory m_memory = HeapMemory::DeviceLocal;
         std::vector<Block> m_free_blocks;
         std::unordered_map<uint64_t, Block> m_allocations;
-#ifdef RIMERA_MAC
+#ifdef RIMERA_METAL
         NS::SharedPtr<MTL::Heap> m_heap;
-#elifdef RIMERA_WINDOWS
+#elifdef RIMERA_D3D12
         ComPtr<ID3D12Heap> m_heap;
 #endif
     };

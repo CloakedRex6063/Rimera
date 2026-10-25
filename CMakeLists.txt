@@ -1,11 +1,32 @@
 cmake_minimum_required(VERSION 4.0)
 project(Rimera)
 
-if (APPLE)
-    enable_language(OBJCXX)
-endif ()
-
 set(CMAKE_CXX_STANDARD 23)
+
+if (WIN32)
+    set(RIMERA_DEFAULT_BACKEND D3D12)
+elseif (APPLE)
+    set(RIMERA_DEFAULT_BACKEND Metal)
+else ()
+    set(RIMERA_DEFAULT_BACKEND Vulkan)
+endif ()
+set(RIMERA_BACKEND ${RIMERA_DEFAULT_BACKEND} CACHE STRING "D3D12|Metal|Vulkan")
+set_property(CACHE RIMERA_BACKEND PROPERTY STRINGS D3D12 Metal Vulkan)
+
+if (RIMERA_BACKEND STREQUAL "D3D12")
+    if (NOT WIN32)
+        message(FATAL_ERROR "The D3D12 backend requires Windows")
+    endif ()
+elseif (RIMERA_BACKEND STREQUAL "Metal")
+    if (NOT APPLE)
+        message(FATAL_ERROR "The Metal backend requires macOS")
+    endif ()
+    enable_language(OBJCXX)
+elseif (RIMERA_BACKEND STREQUAL "Vulkan")
+    message(FATAL_ERROR "The Vulkan backend is not implemented yet")
+else ()
+    message(FATAL_ERROR "Unknown RIMERA_BACKEND '${RIMERA_BACKEND}', expected D3D12, Metal or Vulkan")
+endif ()
 
 function(rimera_disable_exceptions target)
     if (MSVC)
@@ -50,8 +71,16 @@ target_compile_definitions(Rimera PUBLIC
 target_include_directories(Rimera PUBLIC inc)
 target_precompile_headers(Rimera PUBLIC ${CMAKE_SOURCE_DIR}/src/rimera_pch.hpp)
 
-if (APPLE)
+if (WIN32)
+    target_compile_definitions(Rimera PUBLIC RIMERA_WINDOWS)
+elseif (APPLE)
     target_compile_definitions(Rimera PUBLIC RIMERA_MAC)
+else ()
+    target_compile_definitions(Rimera PUBLIC RIMERA_LINUX)
+endif ()
+
+if (RIMERA_BACKEND STREQUAL "Metal")
+    target_compile_definitions(Rimera PUBLIC RIMERA_METAL)
     target_sources(Rimera
             PRIVATE
             src/metal/rimera_metal.hpp
@@ -69,9 +98,8 @@ if (APPLE)
             src/metal/rimera_sampler.cpp
             src/metal/rimera_heap.cpp
     )
-elseif (WIN32)
-    target_compile_definitions(Rimera PUBLIC RIMERA_WINDOWS)
-
+elseif (RIMERA_BACKEND STREQUAL "D3D12")
+    target_compile_definitions(Rimera PUBLIC RIMERA_D3D12)
     target_sources(Rimera
             PRIVATE
             src/d3d12/rimera_device.cpp
