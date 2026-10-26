@@ -1,10 +1,9 @@
 #include "rimera_compiler.hpp"
 #include "rimera_helpers.hpp"
 #include "dxc/dxcapi.h"
-#include "cstring"
 #include "limits"
 
-#ifdef RIMERA_MAC
+#if defined(RIMERA_MAC) || defined(RIMERA_LINUX)
 template <typename T>
 using ComPtr = CComPtr<T>;
 #endif

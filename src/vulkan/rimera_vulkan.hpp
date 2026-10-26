@@ -178,6 +178,11 @@ namespace RM::Vulkan
     [[nodiscard]] float GetSdrWhiteLevel(const wchar_t* device_name);
 #endif
 
+
+    [[nodiscard]] std::vector<const char*> GetSurfaceExtensions();
+    [[nodiscard]] Result<VkSurfaceKHR> CreateSurface(VkInstance instance,
+                                                     const SwapchainCreateInfo& info);
+
     [[nodiscard]] constexpr uint32_t GetQueueIndex(QueueType type)
     {
         return static_cast<uint32_t>(type);

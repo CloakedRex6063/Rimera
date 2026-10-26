@@ -20,9 +20,15 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
                                            available_extensions.data());
 
     std::vector<const char*> instance_extensions = {VK_KHR_SURFACE_EXTENSION_NAME};
-#ifdef RIMERA_WINDOWS
-    instance_extensions.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-#endif
+    bool has_surface_extension = false;
+    for (const char* name : Vulkan::GetSurfaceExtensions())
+    {
+        if (!Vulkan::HasExtension(available_extensions, name)) continue;
+        instance_extensions.push_back(name);
+        has_surface_extension = true;
+    }
+    if (!has_surface_extension)
+        return std::unexpected("No Vulkan surface extension for this platform is available");
     m_swapchain_colorspace =
         Vulkan::HasExtension(available_extensions, VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME);
     std::vector<std::string> missing;

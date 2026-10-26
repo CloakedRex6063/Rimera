@@ -1,5 +1,6 @@
 #pragma once
 #include "rimera_result.hpp"
+#include "rimera_structs.hpp"
 #include "glm/glm.hpp"
 #include "array"
 #include "string"
@@ -73,6 +74,12 @@ enum class MouseButton : uint8_t
     Count
 };
 
+struct NativeWindow
+{
+    void* window = nullptr;
+    void* display = nullptr;
+};
+
 class Window
 {
 public:
@@ -89,7 +96,9 @@ public:
     [[nodiscard]] glm::uvec2 GetSize() const { return m_size; }
     [[nodiscard]] glm::uvec2 GetFramebufferSize() const { return m_framebuffer_size; }
     [[nodiscard]] float GetContentScale() const { return m_content_scale; }
-    [[nodiscard]] void* GetNativeHandle() const;
+    [[nodiscard]] static NativeWindow GetNativeWindow(GLFWwindow* handle);
+    [[nodiscard]] NativeWindow GetNativeWindow() const { return GetNativeWindow(m_window); }
+    [[nodiscard]] void* GetNativeHandle() const { return GetNativeWindow().window; }
     [[nodiscard]] GLFWwindow* GetGlfwWindow() const { return m_window; }
 
     [[nodiscard]] bool IsKeyDown(Key key) const { return m_keys[static_cast<size_t>(key)]; }

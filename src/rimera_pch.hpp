@@ -30,6 +30,12 @@ using namespace Microsoft::WRL;
 #endif
 
 #include "memory"
+#include "cstdint"
+#include "cstdio"
+#include "cstdlib"
+#include "numeric"
+#include "span"
+#include "expected"
 #include "cstring"
 #include "array"
 #include "string_view"

@@ -4,12 +4,24 @@ set_target_properties(DXC::Compiler PROPERTIES
         "${PROJECT_SOURCE_DIR}/external/dxil/include"
 )
 if (WIN32)
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64")
+        set(DXC_WINDOWS_ARCH arm64)
+    else ()
+        set(DXC_WINDOWS_ARCH x64)
+    endif ()
+    FetchContent_Declare(
+            DXC_Windows
+            URL https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/dxc_2026_09_29.zip
+            URL_HASH SHA256=ad31b1fc8443175d204f77a611fdb3ef2ec42759bdc2f1167368de24a4a7e7f1
+    )
+    FetchContent_MakeAvailable(DXC_Windows)
     set_target_properties(DXC::Compiler PROPERTIES
             IMPORTED_IMPLIB
-            "${PROJECT_SOURCE_DIR}/external/dxil/dxcompiler.lib"
+            "${dxc_windows_SOURCE_DIR}/lib/${DXC_WINDOWS_ARCH}/dxcompiler.lib"
             IMPORTED_LOCATION
-            "${PROJECT_SOURCE_DIR}/external/dxil/dxcompiler.dll"
+            "${dxc_windows_SOURCE_DIR}/bin/${DXC_WINDOWS_ARCH}/dxcompiler.dll"
     )
+    set(DXC_EXTRA_RUNTIME_FILES "${dxc_windows_SOURCE_DIR}/bin/${DXC_WINDOWS_ARCH}/dxil.dll" CACHE INTERNAL "")
 
     add_library(WindowsLean INTERFACE)
     target_include_directories(WindowsLean INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/win32)
@@ -18,6 +30,17 @@ elseif (APPLE)
     set_target_properties(DXC::Compiler PROPERTIES
             IMPORTED_LOCATION
             "${PROJECT_SOURCE_DIR}/external/dxil/libdxcompiler.dylib"
+    )
+else ()
+    FetchContent_Declare(
+            DXC_Linux
+            URL https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2609/linux_dxc_2026_09_28.x86_x64.tar.gz
+            URL_HASH SHA256=96faadc7f5c282d2ffda49804beb4c3ee38127bc252b723234e3c5cdf7aa39a1
+    )
+    FetchContent_MakeAvailable(DXC_Linux)
+    set_target_properties(DXC::Compiler PROPERTIES
+            IMPORTED_LOCATION
+            "${dxc_linux_SOURCE_DIR}/lib/libdxcompiler.so"
     )
 endif ()
 
@@ -53,6 +76,15 @@ if (RIMERA_BACKEND STREQUAL "Metal")
     target_include_directories(Rimera PRIVATE ${METAL_IRCONVERTER_INCLUDE_DIR})
     target_link_libraries(Rimera PRIVATE ${METAL_IRCONVERTER_LIBRARY})
 elseif (RIMERA_BACKEND STREQUAL "D3D12")
+    FetchContent_Declare(
+            AgilitySDK
+            URL https://api.nuget.org/v3-flatcontainer/microsoft.direct3d.d3d12/1.619.6/microsoft.direct3d.d3d12.1.619.6.nupkg
+            DOWNLOAD_NAME microsoft.direct3d.d3d12.1.619.6.zip
+            URL_HASH SHA256=08f0489281401aa430fc37322d6c3fc98a8025175aacd714c10d562f4963f1e9
+    )
+    FetchContent_MakeAvailable(AgilitySDK)
+    set(D3D12_RUNTIME_DIR "${agilitysdk_SOURCE_DIR}/build/native/bin/${DXC_WINDOWS_ARCH}" CACHE INTERNAL "")
+
     FetchContent_Declare(
             DX-Headers
             GIT_REPOSITORY https://github.com/microsoft/DirectX-Headers
@@ -105,7 +137,6 @@ endif ()
 
 function(copy_runtime_dlls target)
     if (RIMERA_BACKEND STREQUAL "D3D12")
-        set(D3D12_RUNTIME_DIR "${PROJECT_SOURCE_DIR}/external/d3d12")
         add_custom_target(copy_runtime_${target}
                 COMMAND ${CMAKE_COMMAND} -E make_directory
                 "$<TARGET_FILE_DIR:${target}>/D3D12"
@@ -119,6 +150,7 @@ function(copy_runtime_dlls target)
         add_custom_target(copy_runtime_dxcompiler_${target}
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:DXC::Compiler>"
+                ${DXC_EXTRA_RUNTIME_FILES}
                 "$<TARGET_FILE_DIR:${target}>"
                 VERBATIM
         )
@@ -128,10 +160,16 @@ function(copy_runtime_dlls target)
         add_custom_target(copy_runtime_dxcompiler_${target}
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "$<TARGET_FILE:DXC::Compiler>"
+                ${DXC_EXTRA_RUNTIME_FILES}
                 "$<TARGET_FILE_DIR:${target}>"
                 VERBATIM
         )
         add_dependencies(${target} copy_runtime_dxcompiler_${target})
+        if (UNIX AND NOT APPLE)
+            set_target_properties(${target} PROPERTIES
+                    BUILD_RPATH "$ORIGIN"
+                    INSTALL_RPATH "$ORIGIN")
+        endif ()
     elseif (RIMERA_BACKEND STREQUAL "Metal")
         get_filename_component(METAL_IRCONVERTER_LIBRARY_DIR "${METAL_IRCONVERTER_LIBRARY}" DIRECTORY)
         set_target_properties(${target} PROPERTIES

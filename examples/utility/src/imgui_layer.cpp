@@ -610,13 +610,16 @@ void ImGuiLayer::CreateViewport(ImGuiViewport* viewport)
     int width = 0;
     int height = 0;
     glfwGetFramebufferSize(static_cast<GLFWwindow*>(viewport->PlatformHandle), &width, &height);
+    const NativeWindow native_window =
+        Window::GetNativeWindow(static_cast<GLFWwindow*>(viewport->PlatformHandle));
     auto swapchain = layer->m_device->CreateSwapchain(layer->m_queue,
                                                       {
-                                                          .window = viewport->PlatformHandleRaw,
+                                                          .window = native_window.window,
                                                           .width = static_cast<uint32_t>(
                                                               std::max(width, 1)),
                                                           .height = static_cast<uint32_t>(
                                                               std::max(height, 1)),
+                                                          .display = native_window.display,
                                                       });
     if (!swapchain)
     {

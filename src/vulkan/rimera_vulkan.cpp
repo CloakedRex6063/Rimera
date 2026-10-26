@@ -930,3 +930,62 @@ RM::Vulkan::DisplayHdr RM::Vulkan::QueryDisplayHdr(void*)
     return {};
 }
 #endif
+
+#ifdef RIMERA_WINDOWS
+std::vector<const char*> RM::Vulkan::GetSurfaceExtensions()
+{
+    return {VK_KHR_WIN32_SURFACE_EXTENSION_NAME};
+}
+
+RM::Result<VkSurfaceKHR> RM::Vulkan::CreateSurface(VkInstance instance,
+                                                   const SwapchainCreateInfo& info)
+{
+    const VkWin32SurfaceCreateInfoKHR surface_info{
+        .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
+        .hinstance = GetModuleHandleW(nullptr),
+        .hwnd = static_cast<HWND>(info.window),
+    };
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    if (const auto result = vkCreateWin32SurfaceKHR(instance, &surface_info, nullptr, &surface);
+        result != VK_SUCCESS)
+        return std::unexpected("Failed to create surface, " + ResultMessage(result));
+    return surface;
+}
+#endif
+
+#ifdef RIMERA_LINUX
+std::vector<const char*> RM::Vulkan::GetSurfaceExtensions()
+{
+    return {"VK_KHR_xlib_surface"};
+}
+
+RM::Result<VkSurfaceKHR> RM::Vulkan::CreateSurface(VkInstance instance,
+                                                   const SwapchainCreateInfo& info)
+{
+    struct XlibSurfaceCreateInfo
+    {
+        VkStructureType sType;
+        const void* pNext;
+        VkFlags flags;
+        void* dpy;
+        unsigned long window;
+    };
+    using CreateXlibSurface = VkResult(VKAPI_PTR*)(VkInstance,
+                                                   const XlibSurfaceCreateInfo*,
+                                                   const VkAllocationCallbacks*,
+                                                   VkSurfaceKHR*);
+    const auto create = reinterpret_cast<CreateXlibSurface>(
+        vkGetInstanceProcAddr(instance, "vkCreateXlibSurfaceKHR"));
+    if (!create) return std::unexpected("vkCreateXlibSurfaceKHR is not available");
+    const XlibSurfaceCreateInfo surface_info{
+        .sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR,
+        .dpy = info.display,
+        .window = static_cast<unsigned long>(reinterpret_cast<uintptr_t>(info.window)),
+    };
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    const VkResult result = create(instance, &surface_info, nullptr, &surface);
+    if (result != VK_SUCCESS)
+        return std::unexpected("Failed to create surface, " + ResultMessage(result));
+    return surface;
+}
+#endif

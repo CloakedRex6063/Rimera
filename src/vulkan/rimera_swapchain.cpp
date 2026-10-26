@@ -12,21 +12,9 @@ RM::Result<void> RM::Swapchain::Initialize(Device* device,
     m_queue = queue;
     m_window = info.window;
 
-#ifdef RIMERA_WINDOWS
-    const VkWin32SurfaceCreateInfoKHR surface_info{
-        .sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,
-        .hinstance = GetModuleHandleW(nullptr),
-        .hwnd = static_cast<HWND>(info.window),
-    };
-    if (const auto result = vkCreateWin32SurfaceKHR(device->m_instance,
-                                                    &surface_info,
-                                                    nullptr,
-                                                    &m_surface);
-        result != VK_SUCCESS)
-        return std::unexpected("Failed to create surface, " + Vulkan::ResultMessage(result));
-#else
-    return std::unexpected("Swapchains are not supported on this platform");
-#endif
+    auto surface = Vulkan::CreateSurface(device->m_instance, info);
+    if (!surface) return std::unexpected(surface.error());
+    m_surface = *surface;
 
     VkBool32 supported = VK_FALSE;
     vkGetPhysicalDeviceSurfaceSupportKHR(device->m_physical_device,

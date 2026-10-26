@@ -1,7 +1,8 @@
 #pragma once
 #include "rimera_result.hpp"
-
 #include "optional"
+#include "span"
+#include "string"
 #include "vector"
 #include "string_view"
 #include "rimera_enum_flags.hpp"
@@ -87,6 +88,7 @@ namespace RM
         void* window = nullptr;
         uint32_t width = 0;
         uint32_t height = 0;
+        void* display = nullptr;
     };
 
     struct DisplayInfo

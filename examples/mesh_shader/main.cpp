@@ -320,11 +320,13 @@ int main()
         return 1;
     }
     auto* queue = *result_queue;
+    const NativeWindow native_window = window->GetNativeWindow();
     auto result_swapchain = device->CreateSwapchain(queue,
                                                     {
-                                                        .window = window->GetNativeHandle(),
+                                                        .window = native_window.window,
                                                         .width = size.x,
                                                         .height = size.y,
+                                                        .display = native_window.display,
                                                     });
     if (!result_swapchain)
     {

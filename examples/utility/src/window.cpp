@@ -8,10 +8,21 @@
 #define GLFW_EXPOSE_NATIVE_COCOA
 #endif
 #include "GLFW/glfw3.h"
+#ifdef __linux__
+extern "C"
+{
+unsigned long glfwGetX11Window(GLFWwindow* window);
+void* glfwGetX11Display(void);
+}
+#else
 #include "GLFW/glfw3native.h"
+#endif
 
 #ifdef _WIN32
 #include "shellapi.h"
+#elifdef __linux__
+#include "spawn.h"
+extern char** environ;
 #elifdef __APPLE__
 #include "CoreServices/CoreServices.h"
 #endif
@@ -145,14 +156,17 @@ bool Window::IsResized() const
     return m_resized;
 }
 
-void* Window::GetNativeHandle() const
+NativeWindow Window::GetNativeWindow(GLFWwindow* handle)
 {
 #ifdef _WIN32
-    return glfwGetWin32Window(m_window);
+    return {.window = glfwGetWin32Window(handle)};
 #elifdef __APPLE__
-    return glfwGetCocoaWindow(m_window);
+    return {.window = glfwGetCocoaWindow(handle)};
+#elifdef __linux__
+    return {.window = reinterpret_cast<void*>(static_cast<uintptr_t>(glfwGetX11Window(handle))),
+            .display = glfwGetX11Display()};
 #else
-    return nullptr;
+    return {};
 #endif
 }
 
@@ -165,6 +179,11 @@ void Window::OpenInShell(std::string_view path)
     std::wstring wide(static_cast<size_t>(length), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, narrow.c_str(), -1, wide.data(), length);
     ShellExecuteW(nullptr, L"open", wide.c_str(), nullptr, nullptr, SW_SHOWDEFAULT);
+#elifdef __linux__
+    const std::string narrow(path);
+    char* const arguments[] = {const_cast<char*>("xdg-open"), const_cast<char*>(narrow.c_str()), nullptr};
+    pid_t process = 0;
+    posix_spawnp(&process, "xdg-open", nullptr, nullptr, arguments, environ);
 #elifdef __APPLE__
     const CFURLRef url = CFURLCreateWithBytes(nullptr,
                                               reinterpret_cast<const UInt8*>(path.data()),
