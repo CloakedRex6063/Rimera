@@ -3,7 +3,6 @@
 
 cbuffer RootConstants : register(b3)
 {
-    uint2 size;
     uint visibility_index;
     uint bary_coords_index;
     uint bary_derivatives_index;
@@ -13,8 +12,11 @@ cbuffer RootConstants : register(b3)
 [numthreads(8, 8, 1)]
 void CSMain(uint2 id : SV_DispatchThreadID)
 {
-    if (id.x >= size.x || id.y >= size.y) return;
     Texture2D<uint> visibility = ResourceDescriptorHeap[visibility_index];
+    uint width, height;
+    visibility.GetDimensions(width, height);
+    if (id.x >= width || id.y >= height) return;
+    const uint2 size = uint2(width, height);
     uint vis_id = visibility.Load(int3(id.xy, 0));
     
     RWTexture2D<uint> uv_texture = ResourceDescriptorHeap[bary_coords_index];

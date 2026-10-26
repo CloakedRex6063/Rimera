@@ -191,19 +191,19 @@ float4 SampleBaseColorTexture(Material material, float2 uv, float2 uv_dx, float2
     return base_color;
 }
 
-float4 SampleMetallicRoughnessTexture(Material material, float2 uv, float2 uv_dx, float2 uv_dy)
+float2 SampleMetallicRoughnessTexture(Material material, float2 uv, float2 uv_dx, float2 uv_dy)
 {
-    float4 metallic_roughness;
+    float2 metallic_roughness;
     if (HasTexture(material, TEXTURE_SLOT_METALLIC_ROUGHNESS))
     {
         Texture2D<float4> texture =
             ResourceDescriptorHeap[NonUniformResourceIndex(GetTextureDescriptor(material, TEXTURE_SLOT_METALLIC_ROUGHNESS))];
         SamplerState texture_sampler = SamplerDescriptorHeap[sampler_index];
-        metallic_roughness = texture.SampleGrad(texture_sampler, uv, uv_dx, uv_dy);
+        metallic_roughness = texture.SampleGrad(texture_sampler, uv, uv_dx, uv_dy).gb;
     }
     else
     {
-        metallic_roughness = float4(1.0, 1.0, 1.0, 1.0);
+        metallic_roughness = float2(1.0, 1.0);
     }
     return metallic_roughness;
 }

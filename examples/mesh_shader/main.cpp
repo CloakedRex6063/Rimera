@@ -53,13 +53,12 @@ struct MeshShaderScene
 
     struct TonemapData
     {
-        glm::uvec2 size;
         float headroom;
         float sdr_white_scale;
         uint32_t hdr;
     };
 
-    static_assert(sizeof(TonemapData) == 20);
+    static_assert(sizeof(TonemapData) == 12);
 
     static constexpr auto kVisibilityFormat = RM::Format::R32_UInt;
     static constexpr auto kColorFormat = RM::Format::RGBA16_Float;
@@ -67,7 +66,10 @@ struct MeshShaderScene
     static constexpr auto kUVFormat = RM::Format::R32_UInt;
     static constexpr auto kDerivFormat = RM::Format::RGBA16_Float;
     static constexpr auto kTangentFrameFormat = RM::Format::RGBA16_UInt;
-    static constexpr auto kAlbedoFormat = RM::Format::RGBA16_Float;
+    static constexpr auto kAlbedoFormat = RM::Format::RGBA8_UNorm_sRGB;
+    static constexpr auto kNormalFormat = RM::Format::RG16_UNorm;
+    static constexpr auto kRoughOcclusionFormat = RM::Format::RG8_UNorm;
+    static constexpr auto kEmissiveFormat = RM::Format::RG11B10_Float;
 
     MeshShaderScene(RM::Device* device, Model* model, glm::uvec2 size)
         : device(device), model(model), size(size), residency(device->GetCoreResidencySet())
@@ -293,6 +295,21 @@ struct MeshShaderScene
     }
 };
 
+enum class DebugView : uint32_t
+{
+    VisibilityBuffer,
+    Albedo,
+    Metallic,
+    Roughness,
+    Occlusion,
+    Emissive,
+    Normal,
+};
+
+constexpr const char* kDebugViewNames[] = {
+    "Visibility Buffer", "Albedo", "Metallic", "Roughness", "Occlusion", "Emissive", "Normal",
+};
+
 int main()
 {
     auto window_result = Window::Create();
@@ -407,7 +424,7 @@ int main()
     }
     imgui = result_imgui.value();
 
-    bool bDebugVisibility = true;
+    DebugView debug_view = DebugView::VisibilityBuffer;
     glm::uvec2 viewport_size = size;
     bool viewport_input = false;
     while (window->IsRunning())
@@ -504,6 +521,18 @@ int main()
             RM::TextureBuilder(render_size.x, render_size.y).Format(
                 MeshShaderScene::kAlbedoFormat).Build(),
             "albedo");
+        auto normal_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y).Format(
+                MeshShaderScene::kNormalFormat).Build(),
+            "normal");
+        auto rough_occlusion_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y).Format(
+                MeshShaderScene::kRoughOcclusionFormat).Build(),
+            "rough occlusion");
+        auto emissive_texture = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y).Format(
+                MeshShaderScene::kEmissiveFormat).Build(),
+            "emissive");
 
         graph->AddRenderPass("Scene")
              .Color(visibility,
@@ -522,11 +551,10 @@ int main()
              .Write(tangent_frame_texture)
              .Pipeline(scene.interp_pipeline)
              .ConstantBuffer(0, scene.UpdateScene(view_projection))
-             .RootConstants(render_size, 0)
-             .ResourceIndex(8, visibility)
-             .ResourceIndex(12, uv_texture)
-             .ResourceIndex(16, uv_gradient_texture)
-             .ResourceIndex(20, tangent_frame_texture)
+             .ResourceIndex(0, visibility)
+             .ResourceIndex(4, uv_texture)
+             .ResourceIndex(8, uv_gradient_texture)
+             .ResourceIndex(12, tangent_frame_texture)
              .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
         graph->AddComputePass("Shading")
@@ -535,33 +563,61 @@ int main()
              .Read(uv_gradient_texture)
              .Read(tangent_frame_texture)
              .Write(albedo_texture)
+             .Write(normal_texture)
+             .Write(rough_occlusion_texture)
+             .Write(emissive_texture)
              .Pipeline(scene.shading_pipeline)
              .ConstantBuffer(0, scene.UpdateScene(view_projection))
-             .RootConstants(render_size, 0)
-             .ResourceIndex(8, uv_texture)
-             .ResourceIndex(12, uv_gradient_texture)
-             .ResourceIndex(16, tangent_frame_texture)
-             .ResourceIndex(20, visibility)
-             .ResourceIndex(24, albedo_texture)
+             .ResourceIndex(0, uv_texture)
+             .ResourceIndex(4, uv_gradient_texture)
+             .ResourceIndex(8, tangent_frame_texture)
+             .ResourceIndex(12, visibility)
+             .ResourceIndex(16, albedo_texture)
+             .ResourceIndex(20, normal_texture)
+             .ResourceIndex(24, rough_occlusion_texture)
+             .ResourceIndex(28, emissive_texture)
              .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
-        graph->AddComputePass("Visualize")
-             .Read(visibility)
-             .Write(debug)
-             .Pipeline(scene.debug_pipeline)
-             .ResourceIndex(0, visibility)
-             .ResourceIndex(4, debug)
-             .RootConstants(render_size, 8)
-             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
+        auto debug_input = visibility;
+        switch (debug_view)
+        {
+            case DebugView::VisibilityBuffer:
+                debug_input = visibility;
+                break;
+            case DebugView::Albedo:
+            case DebugView::Metallic:
+                debug_input = albedo_texture;
+                break;
+            case DebugView::Roughness:
+            case DebugView::Occlusion:
+                debug_input = rough_occlusion_texture;
+                break;
+            case DebugView::Emissive:
+                debug_input = emissive_texture;
+                break;
+            case DebugView::Normal:
+                debug_input = normal_texture;
+                break;
+        }
+
+        auto visualize = graph->AddComputePass("Visualize");
+        visualize.Read(visibility)
+                 .Read(debug_input)
+                 .Write(debug)
+                 .Pipeline(scene.debug_pipeline)
+                 .ResourceIndex(0, debug)
+                 .ResourceIndex(4, visibility)
+                 .ResourceIndex(8, debug_input)
+                 .RootConstants(static_cast<uint32_t>(debug_view), 12);
+        visualize.Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
         graph->AddComputePass("Tonemap")
-             .Read(bDebugVisibility ? debug : albedo_texture)
+             .Read(debug)
              .Write(pp)
              .Pipeline(scene.tonemap_pipeline)
-             .ResourceIndex(0, bDebugVisibility ? debug : albedo_texture)
+             .ResourceIndex(0, debug)
              .ResourceIndex(4, pp)
              .RootConstants(MeshShaderScene::TonemapData{
-                                .size = render_size,
                                 .headroom = display_info.headroom,
                                 .sdr_white_scale = display_info.sdr_white_scale,
                                 .hdr = display_info.hdr ? 1u : 0u,
@@ -595,7 +651,10 @@ int main()
 
         if (ImGui::Begin("Visibility Buffer"))
         {
-            ImGui::Checkbox("Debug Visibility", &bDebugVisibility);
+            ImGui::Combo("Debug View",
+                         reinterpret_cast<int*>(&debug_view),
+                         kDebugViewNames,
+                         std::size(kDebugViewNames));
         }
         ImGui::End();
 
