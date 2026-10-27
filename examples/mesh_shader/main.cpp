@@ -9,6 +9,8 @@
 #include "rimera_render_graph.hpp"
 #include "chrono"
 #include "imgui_layer.hpp"
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/gtx/euler_angles.hpp"
 
 struct MeshShaderScene
 {
@@ -43,11 +45,13 @@ struct MeshShaderScene
         uint32_t material_buffer_index;
         uint32_t texture_buffer_index;
         uint32_t sampler_index;
-        uint32_t padding[3]{};
+        glm::vec3 camera_position{};
         glm::mat4 view_projection{1};
+        glm::mat4 inverse_view_projection{1};
+        float padding{};
     };
 
-    static_assert(sizeof(SceneData) == 96);
+    static_assert(sizeof(SceneData) == 164);
 
     static constexpr uint32_t kFramesInFlight = 3;
 
@@ -59,6 +63,16 @@ struct MeshShaderScene
     };
 
     static_assert(sizeof(TonemapData) == 12);
+
+    struct DirLight
+    {
+        glm::vec3 direction;
+        float intensity;
+        glm::vec3 color;
+        float padding{};
+    };
+
+    static_assert(sizeof(DirLight) == 32);
 
     static constexpr auto kVisibilityFormat = RM::Format::R32_UInt;
     static constexpr auto kColorFormat = RM::Format::RGBA16_Float;
@@ -92,6 +106,7 @@ struct MeshShaderScene
     RM::Pipeline* vis_pipeline = nullptr;
     RM::Pipeline* interp_pipeline = nullptr;
     RM::Pipeline* shading_pipeline = nullptr;
+    RM::Pipeline* lighting_pipeline = nullptr;
     RM::Pipeline* debug_pipeline = nullptr;
     RM::Pipeline* tonemap_pipeline = nullptr;
     RM::Sampler* sampler = nullptr;
@@ -201,6 +216,8 @@ struct MeshShaderScene
         if (!interp_shader) return std::unexpected(interp_shader.error());
         auto shading_shader = CompileShader("shading.hlsl", "CSMain", RM::ShaderType::Compute);
         if (!shading_shader) return std::unexpected(shading_shader.error());
+        auto lighting_shader = CompileShader("lighting.hlsl", "CSMain", RM::ShaderType::Compute);
+        if (!lighting_shader) return std::unexpected(lighting_shader.error());
         auto debug_shader = CompileShader("debug.hlsl", "CSMain", RM::ShaderType::Compute);
         if (!debug_shader) return std::unexpected(debug_shader.error());
         auto tonemap_shader = CompileShader("tonemap.hlsl", "CSMain", RM::ShaderType::Compute);
@@ -234,6 +251,12 @@ struct MeshShaderScene
         });
         if (!shading_result) return std::unexpected(shading_result.error());
         shading_pipeline = *shading_result;
+
+        auto lighting_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
+            .shader = *lighting_shader,
+        });
+        if (!lighting_result) return std::unexpected(lighting_result.error());
+        lighting_pipeline = *lighting_result;
 
         auto debug_result = device->CreatePipeline(RM::ComputePipelineCreateInfo{
             .shader = *debug_shader,
@@ -271,10 +294,12 @@ struct MeshShaderScene
         compiler = nullptr;
     }
 
-    RM::Buffer* UpdateScene(const glm::mat4& view_projection)
+    RM::Buffer* UpdateScene(const glm::mat4& view_projection, const glm::vec3& camera_position)
     {
         scene_frame = (scene_frame + 1) % kFramesInFlight;
         scene_constants.view_projection = view_projection;
+        scene_constants.inverse_view_projection = glm::inverse(view_projection);
+        scene_constants.camera_position = camera_position;
         std::memcpy(scene_data[scene_frame], &scene_constants, sizeof(SceneData));
         return scene_buffers[scene_frame];
     }
@@ -288,6 +313,7 @@ struct MeshShaderScene
         if (vis_pipeline) device->DestroyImmediate(vis_pipeline);
         if (interp_pipeline) device->DestroyImmediate(interp_pipeline);
         if (shading_pipeline) device->DestroyImmediate(shading_pipeline);
+        if (lighting_pipeline) device->DestroyImmediate(lighting_pipeline);
         if (debug_pipeline) device->DestroyImmediate(debug_pipeline);
         if (tonemap_pipeline) device->DestroyImmediate(tonemap_pipeline);
         if (sampler) device->DestroyImmediate(sampler);
@@ -295,7 +321,7 @@ struct MeshShaderScene
     }
 };
 
-enum class DebugView : uint32_t
+enum class ViewType : uint32_t
 {
     VisibilityBuffer,
     Albedo,
@@ -304,10 +330,13 @@ enum class DebugView : uint32_t
     Occlusion,
     Emissive,
     Normal,
+    Lit,
 };
 
-constexpr const char* kDebugViewNames[] = {
+// TODO: Just use magic enum later
+constexpr const char* kViewTypesNames[] = {
     "Visibility Buffer", "Albedo", "Metallic", "Roughness", "Occlusion", "Emissive", "Normal",
+    "Lit",
 };
 
 int main()
@@ -424,7 +453,10 @@ int main()
     }
     imgui = result_imgui.value();
 
-    DebugView debug_view = DebugView::VisibilityBuffer;
+    auto view_type = ViewType::Lit;
+    MeshShaderScene::DirLight dir_light
+        {.direction = {}, .intensity = 3.f, .color = {1.f, 1.f, 1.f}};
+    glm::vec3 light_rotation{-50.f, 30.f, 0.f};
     glm::uvec2 viewport_size = size;
     bool viewport_input = false;
     while (window->IsRunning())
@@ -483,6 +515,7 @@ int main()
             break;
         }
 
+        auto* scene_buffer = scene.UpdateScene(view_projection, camera.GetPosition());
         auto* command = command_ring->GetCurrent();
 
         command->Begin();
@@ -496,6 +529,10 @@ int main()
             RM::TextureBuilder(render_size.x, render_size.y)
             .Format(MeshShaderScene::kColorFormat).Build(),
             "debug");
+        auto lit = graph->CreateTexture(
+            RM::TextureBuilder(render_size.x, render_size.y)
+            .Format(MeshShaderScene::kColorFormat).Build(),
+            "lit");
         auto pp = graph->CreateTexture(
             RM::TextureBuilder(render_size.x, render_size.y)
             .Format(MeshShaderScene::kColorFormat).Build(),
@@ -539,9 +576,9 @@ int main()
                     RM::LoadOp::Clear,
                     RM::StoreOp::Store,
                     {.r = 0, .g = 0, .b = 0, .a = 0})
-             .Depth(depth, RM::LoadOp::Clear, RM::StoreOp::DontCare)
+             .Depth(depth, RM::LoadOp::Clear, RM::StoreOp::Store)
              .Pipeline(scene.vis_pipeline)
-             .ConstantBuffer(0, scene.UpdateScene(view_projection))
+             .ConstantBuffer(0, scene_buffer)
              .DispatchMesh({.x = scene.meshlet_count, .y = 1, .z = 1});
 
         graph->AddComputePass("Interp")
@@ -550,7 +587,7 @@ int main()
              .Write(uv_gradient_texture)
              .Write(tangent_frame_texture)
              .Pipeline(scene.interp_pipeline)
-             .ConstantBuffer(0, scene.UpdateScene(view_projection))
+             .ConstantBuffer(0, scene_buffer)
              .ResourceIndex(0, visibility)
              .ResourceIndex(4, uv_texture)
              .ResourceIndex(8, uv_gradient_texture)
@@ -567,7 +604,7 @@ int main()
              .Write(rough_occlusion_texture)
              .Write(emissive_texture)
              .Pipeline(scene.shading_pipeline)
-             .ConstantBuffer(0, scene.UpdateScene(view_projection))
+             .ConstantBuffer(0, scene_buffer)
              .ResourceIndex(0, uv_texture)
              .ResourceIndex(4, uv_gradient_texture)
              .ResourceIndex(8, tangent_frame_texture)
@@ -578,25 +615,50 @@ int main()
              .ResourceIndex(28, emissive_texture)
              .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
+        const glm::vec3 light_radians = glm::radians(light_rotation);
+        dir_light.direction = glm::vec3(
+            glm::yawPitchRoll(light_radians.y, light_radians.x, light_radians.z)[2]);
+        graph->AddComputePass("Lighting")
+             .Read(visibility)
+             .Read(albedo_texture)
+             .Read(normal_texture)
+             .Read(rough_occlusion_texture)
+             .Read(emissive_texture)
+             .Read(depth)
+             .Write(lit)
+             .Pipeline(scene.lighting_pipeline)
+             .ConstantBuffer(0, scene_buffer)
+             .ResourceIndex(0, visibility)
+             .ResourceIndex(4, albedo_texture)
+             .ResourceIndex(8, normal_texture)
+             .ResourceIndex(12, rough_occlusion_texture)
+             .ResourceIndex(16, emissive_texture)
+             .ResourceIndex(20, lit)
+             .ResourceIndex(24, depth)
+             .RootConstants(dir_light, 32)
+             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
+
         auto debug_input = visibility;
-        switch (debug_view)
+        switch (view_type)
         {
-            case DebugView::VisibilityBuffer:
+            case ViewType::VisibilityBuffer:
                 debug_input = visibility;
                 break;
-            case DebugView::Albedo:
-            case DebugView::Metallic:
+            case ViewType::Albedo:
+            case ViewType::Metallic:
                 debug_input = albedo_texture;
                 break;
-            case DebugView::Roughness:
-            case DebugView::Occlusion:
+            case ViewType::Roughness:
+            case ViewType::Occlusion:
                 debug_input = rough_occlusion_texture;
                 break;
-            case DebugView::Emissive:
+            case ViewType::Emissive:
                 debug_input = emissive_texture;
                 break;
-            case DebugView::Normal:
+            case ViewType::Normal:
                 debug_input = normal_texture;
+                break;
+            case ViewType::Lit:
                 break;
         }
 
@@ -608,14 +670,17 @@ int main()
                  .ResourceIndex(0, debug)
                  .ResourceIndex(4, visibility)
                  .ResourceIndex(8, debug_input)
-                 .RootConstants(static_cast<uint32_t>(debug_view), 12);
-        visualize.Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
+                 .RootConstants(static_cast<uint32_t>(view_type), 12);
+        visualize.Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8,
+                            .z = 1});
+        
+        auto tonemap_input = view_type == ViewType::Lit ? lit : debug;
 
         graph->AddComputePass("Tonemap")
-             .Read(debug)
+             .Read(tonemap_input)
              .Write(pp)
              .Pipeline(scene.tonemap_pipeline)
-             .ResourceIndex(0, debug)
+             .ResourceIndex(0, tonemap_input)
              .ResourceIndex(4, pp)
              .RootConstants(MeshShaderScene::TonemapData{
                                 .headroom = display_info.headroom,
@@ -651,10 +716,18 @@ int main()
 
         if (ImGui::Begin("Visibility Buffer"))
         {
-            ImGui::Combo("Debug View",
-                         reinterpret_cast<int*>(&debug_view),
-                         kDebugViewNames,
-                         std::size(kDebugViewNames));
+            ImGui::Combo("View Type",
+                         reinterpret_cast<int*>(&view_type),
+                         kViewTypesNames,
+                         std::size(kViewTypesNames));
+        }
+        ImGui::End();
+
+        if (ImGui::Begin("Lighting"))
+        {
+            ImGui::SliderFloat3("Rotation", &light_rotation.x, -180.f, 180.f);
+            ImGui::SliderFloat("Intensity", &dir_light.intensity, 0.f, 20.f);
+            ImGui::ColorEdit3("Color", &dir_light.color.x);
         }
         ImGui::End();
 

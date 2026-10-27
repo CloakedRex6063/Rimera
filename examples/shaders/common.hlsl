@@ -61,8 +61,10 @@ cbuffer Scene : register(b0)
     uint material_buffer_index;
     uint texture_buffer_index;
     uint sampler_index;
-    uint3 padding;
+    float3 camera_position;
     column_major float4x4 view_projection;
+    column_major float4x4 inverse_view_projection;
+    uint padding;
 }
 
 template <typename T>
