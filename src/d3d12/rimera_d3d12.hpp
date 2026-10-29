@@ -11,6 +11,11 @@ namespace RM::D3D12
     void EnableDebugLayer();
 #endif
 
+    [[nodiscard]] Result<ComPtr<ID3D12CommandSignature>> CreateCommandSignature(
+        ID3D12Device* device,
+        D3D12_INDIRECT_ARGUMENT_TYPE type,
+        UINT stride);
+
     float GetSdrWhiteLevel(const wchar_t* device_name);
     std::string HResultMessage(HRESULT hr);
 

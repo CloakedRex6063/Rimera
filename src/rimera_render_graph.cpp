@@ -23,7 +23,8 @@ namespace
                                     RM::BarrierStage::MeshShading,
                                     RM::BarrierStage::RenderTarget,
                                     RM::BarrierStage::DepthStencil,
-                                    RM::BarrierStage::IndexInput};
+                                    RM::BarrierStage::IndexInput,
+                                    RM::BarrierStage::ExecuteIndirect};
 
     constexpr AccessFlags kWriteAccess{RM::BarrierAccess::RenderTarget,
                                        RM::BarrierAccess::UnorderedAccess,
@@ -274,6 +275,8 @@ void RM::RenderGraph::AddUsage(uint32_t pass_index,
     {
         if (usage.state.access == BarrierAccess::IndexBuffer)
             usage.state.stage = BarrierStage::IndexInput;
+        else if (usage.state.access == BarrierAccess::IndirectArgument)
+            usage.state.stage = BarrierStage::ExecuteIndirect;
         else if (usage.state.access == BarrierAccess::VertexBuffer)
             usage.state.stage = BarrierStage::VertexShading;
         else if (pass.type == GraphPassType::Render)
@@ -975,7 +978,8 @@ RM::Result<void> RM::RenderGraph::RecordPass(Command* command, uint32_t pass_ind
     bool draws = false;
     for (const auto& pass_command : pass.commands)
         draws = draws || std::holds_alternative<DrawCommand>(pass_command) ||
-                std::holds_alternative<DrawIndexedCommand>(pass_command);
+                std::holds_alternative<DrawIndexedCommand>(pass_command) ||
+                std::holds_alternative<DrawIndirectCommand>(pass_command);
     if (pass.topology || draws)
         command->SetPrimitiveTopology(pass.topology.value_or(PrimitiveTopology::TriangleList));
 
@@ -1002,10 +1006,19 @@ RM::Result<void> RM::RenderGraph::RecordPass(Command* command, uint32_t pass_ind
                                                 recorded.first_index,
                                                 recorded.vertex_offset,
                                                 recorded.first_instance);
+                else if constexpr (std::is_same_v<T, DrawIndirectCommand>)
+                    return command->DrawIndirect(m_resources[recorded.buffer].buffer,
+                                                 recorded.offset);
                 else if constexpr (std::is_same_v<T, DispatchMeshCommand>)
                     return command->DispatchMesh(recorded.group);
+                else if constexpr (std::is_same_v<T, DispatchMeshIndirectCommand>)
+                    return command->DispatchMeshIndirect(m_resources[recorded.buffer].buffer,
+                                                         recorded.offset);
                 else if constexpr (std::is_same_v<T, DispatchCommand>)
                     return command->Dispatch(recorded.group);
+                else if constexpr (std::is_same_v<T, DispatchIndirectCommand>)
+                    return command->DispatchIndirect(m_resources[recorded.buffer].buffer,
+                                                     recorded.offset);
                 else if constexpr (std::is_same_v<T, BlitCommand>)
                     return command->Blit(m_resources[recorded.source].texture,
                                          m_resources[recorded.destination].texture,

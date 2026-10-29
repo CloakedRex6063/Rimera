@@ -38,8 +38,12 @@ namespace RM
                                  uint32_t start_vertex,
                                  uint32_t start_instance) const;
 
+        Result<void> DrawIndirect(const Buffer* buffer, uint64_t offset = 0) const;
+
         Result<void> DispatchMesh(DispatchGroup dispatch_group) const;
+        Result<void> DispatchMeshIndirect(const Buffer* buffer, uint64_t offset = 0) const;
         Result<void> Dispatch(DispatchGroup dispatch_group);
+        Result<void> DispatchIndirect(const Buffer* buffer, uint64_t offset = 0);
 
         Result<void> BindShader(const Pipeline* shader);
         Result<void> BindConstantBuffer(uint32_t slot, const Buffer* buffer) const;

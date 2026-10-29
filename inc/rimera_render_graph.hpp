@@ -251,14 +251,32 @@ namespace RM
             uint32_t first_instance = 0;
         };
 
+        struct DrawIndirectCommand
+        {
+            uint32_t buffer = UINT32_MAX;
+            uint64_t offset = 0;
+        };
+
         struct DispatchMeshCommand
         {
             DispatchGroup group{};
         };
 
+        struct DispatchMeshIndirectCommand
+        {
+            uint32_t buffer = UINT32_MAX;
+            uint64_t offset = 0;
+        };
+
         struct DispatchCommand
         {
             DispatchGroup group{};
+        };
+
+        struct DispatchIndirectCommand
+        {
+            uint32_t buffer = UINT32_MAX;
+            uint64_t offset = 0;
         };
 
         struct BlitCommand
@@ -292,8 +310,11 @@ namespace RM
 
         using PassCommand = std::variant<DrawCommand,
                                          DrawIndexedCommand,
+                                         DrawIndirectCommand,
                                          DispatchMeshCommand,
+                                         DispatchMeshIndirectCommand,
                                          DispatchCommand,
+                                         DispatchIndirectCommand,
                                          BlitCommand,
                                          CopyTextureCommand,
                                          CopyBufferCommand,
@@ -695,9 +716,35 @@ namespace RM
             return *this;
         }
 
+        GraphRenderPassBuilder& DrawIndirect(GraphBuffer buffer, uint64_t offset = 0)
+        {
+            Use(buffer,
+                BarrierStage::ExecuteIndirect,
+                BarrierAccess::IndirectArgument,
+                true,
+                false,
+                false);
+            Pass().commands.push_back(
+                RenderGraph::DrawIndirectCommand{.buffer = buffer.index, .offset = offset});
+            return *this;
+        }
+
         GraphRenderPassBuilder& DispatchMesh(DispatchGroup group)
         {
             Pass().commands.push_back(RenderGraph::DispatchMeshCommand{.group = group});
+            return *this;
+        }
+
+        GraphRenderPassBuilder& DispatchMeshIndirect(GraphBuffer buffer, uint64_t offset = 0)
+        {
+            Use(buffer,
+                BarrierStage::ExecuteIndirect,
+                BarrierAccess::IndirectArgument,
+                true,
+                false,
+                false);
+            Pass().commands.push_back(
+                RenderGraph::DispatchMeshIndirectCommand{.buffer = buffer.index, .offset = offset});
             return *this;
         }
 
@@ -722,6 +769,19 @@ namespace RM
         GraphComputePassBuilder& Dispatch(DispatchGroup group)
         {
             Pass().commands.push_back(RenderGraph::DispatchCommand{.group = group});
+            return *this;
+        }
+
+        GraphComputePassBuilder& DispatchIndirect(GraphBuffer buffer, uint64_t offset = 0)
+        {
+            Use(buffer,
+                BarrierStage::ExecuteIndirect,
+                BarrierAccess::IndirectArgument,
+                true,
+                false,
+                false);
+            Pass().commands.push_back(
+                RenderGraph::DispatchIndirectCommand{.buffer = buffer.index, .offset = offset});
             return *this;
         }
 

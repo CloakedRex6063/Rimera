@@ -254,6 +254,9 @@ namespace RM
         ComPtr<D3D12MA::Allocator> m_allocator;
 
         ComPtr<ID3D12RootSignature> m_root_sig;
+        ComPtr<ID3D12CommandSignature> m_dispatch_signature;
+        ComPtr<ID3D12CommandSignature> m_draw_signature;
+        ComPtr<ID3D12CommandSignature> m_dispatch_mesh_signature;
         ComPtr<ID3D12InfoQueue1> m_info_queue;
         DWORD m_callback_cookie = 0;
         bool m_callback_registered = false;

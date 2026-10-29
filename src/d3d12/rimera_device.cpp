@@ -100,6 +100,27 @@ RM::Result<void> RM::Device::Initialize(const DeviceCreateInfo& info)
 
     if (auto result = CreateRootSignature(); !result) return std::unexpected(result.error());
 
+    auto dispatch_signature_result =
+        D3D12::CreateCommandSignature(m_device.Get(),
+                                      D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH,
+                                      sizeof(D3D12_DISPATCH_ARGUMENTS));
+    if (!dispatch_signature_result) return std::unexpected(dispatch_signature_result.error());
+    m_dispatch_signature = std::move(*dispatch_signature_result);
+
+    auto draw_signature_result = D3D12::CreateCommandSignature(m_device.Get(),
+                                                               D3D12_INDIRECT_ARGUMENT_TYPE_DRAW,
+                                                               sizeof(D3D12_DRAW_ARGUMENTS));
+    if (!draw_signature_result) return std::unexpected(draw_signature_result.error());
+    m_draw_signature = std::move(*draw_signature_result);
+
+    auto dispatch_mesh_signature_result =
+        D3D12::CreateCommandSignature(m_device.Get(),
+                                      D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH_MESH,
+                                      sizeof(D3D12_DISPATCH_MESH_ARGUMENTS));
+    if (!dispatch_mesh_signature_result)
+        return std::unexpected(dispatch_mesh_signature_result.error());
+    m_dispatch_mesh_signature = std::move(*dispatch_mesh_signature_result);
+
     for (const auto format : {Format::RGBA16_Float, Format::BGRA8_UNorm})
     {
         auto blit_result = Helpers::CreateBlitShader(this, format);

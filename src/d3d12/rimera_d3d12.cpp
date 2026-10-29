@@ -53,6 +53,25 @@ std::string RM::D3D12::HResultMessage(const HRESULT hr)
     return message;
 }
 
+RM::Result<ComPtr<ID3D12CommandSignature>> RM::D3D12::CreateCommandSignature(
+    ID3D12Device* device,
+    const D3D12_INDIRECT_ARGUMENT_TYPE type,
+    const UINT stride)
+{
+    const D3D12_INDIRECT_ARGUMENT_DESC argument{.Type = type};
+    const D3D12_COMMAND_SIGNATURE_DESC desc{
+        .ByteStride = stride,
+        .NumArgumentDescs = 1,
+        .pArgumentDescs = &argument,
+    };
+    ComPtr<ID3D12CommandSignature> signature;
+    if (const auto result =
+            device->CreateCommandSignature(&desc, nullptr, IID_PPV_ARGS(signature.GetAddressOf()));
+        FAILED(result))
+        return std::unexpected("Failed to create command signature: " + HResultMessage(result));
+    return signature;
+}
+
 // https://learn.microsoft.com/en-us/windows/win32/api/wingdi/ns-wingdi-displayconfig_sdr_white_level
 float RM::D3D12::GetSdrWhiteLevel(const wchar_t* device_name)
 {
@@ -502,6 +521,8 @@ D3D12_BARRIER_SYNC RM::D3D12::GetBarrierSync(BarrierStage stage)
     if (flags.intersects(BarrierStage::RenderTarget)) sync |= D3D12_BARRIER_SYNC_RENDER_TARGET;
     if (flags.intersects(BarrierStage::DepthStencil)) sync |= D3D12_BARRIER_SYNC_DEPTH_STENCIL;
     if (flags.intersects(BarrierStage::IndexInput)) sync |= D3D12_BARRIER_SYNC_INDEX_INPUT;
+    if (flags.intersects(BarrierStage::ExecuteIndirect))
+        sync |= D3D12_BARRIER_SYNC_EXECUTE_INDIRECT;
     return sync;
 }
 

@@ -927,16 +927,23 @@ MTL::Stages RM::Metal::ToBarrierStages(RM::BarrierStage stages)
     const RM::EnumFlags flags(stages);
     MTL::Stages result = 0;
     if (flags.intersects(RM::BarrierStage::VertexShading) ||
-        flags.intersects(RM::BarrierStage::IndexInput))
+        flags.intersects(RM::BarrierStage::IndexInput) ||
+        flags.intersects(RM::BarrierStage::ExecuteIndirect))
         result |= MTL::StageVertex;
     if (flags.intersects(RM::BarrierStage::PixelShading) ||
         flags.intersects(RM::BarrierStage::RenderTarget) ||
         flags.intersects(RM::BarrierStage::DepthStencil))
         result |= MTL::StageFragment;
-    if (flags.intersects(RM::BarrierStage::ComputeShading)) result |= MTL::StageDispatch;
+    if (flags.intersects(RM::BarrierStage::ComputeShading) ||
+        flags.intersects(RM::BarrierStage::ExecuteIndirect))
+        result |= MTL::StageDispatch;
     if (flags.intersects(RM::BarrierStage::Copy)) result |= MTL::StageBlit;
-    if (flags.intersects(RM::BarrierStage::AmplificationShading)) result |= MTL::StageObject;
-    if (flags.intersects(RM::BarrierStage::MeshShading)) result |= MTL::StageMesh;
+    if (flags.intersects(RM::BarrierStage::AmplificationShading) ||
+        flags.intersects(RM::BarrierStage::ExecuteIndirect))
+        result |= MTL::StageObject;
+    if (flags.intersects(RM::BarrierStage::MeshShading) ||
+        flags.intersects(RM::BarrierStage::ExecuteIndirect))
+        result |= MTL::StageMesh;
     if (flags.intersects(RM::BarrierStage::AccelerationStructureBuild) ||
         flags.intersects(RM::BarrierStage::AccelerationStructureCopy))
         result |= MTL::StageAccelerationStructure;

@@ -163,6 +163,20 @@ RM::Result<void> RM::Command::Draw(uint32_t vertex_count,
     return {};
 }
 
+RM::Result<void> RM::Command::DrawIndirect(const Buffer* buffer, const uint64_t offset) const
+{
+#ifdef RIMERA_DEBUG
+    if (!m_render_encoder)
+        return std::unexpected("BeginRenderPass is required before drawing primitives");
+    if (!buffer) return std::unexpected("Cannot draw from a null indirect buffer");
+    if (offset % 4 || offset + sizeof(DrawIndirectArguments) > buffer->GetLength())
+        return std::unexpected("Invalid indirect draw offset");
+#endif
+    if (auto result = FlushArguments(); !result) return result;
+    m_render_encoder->drawPrimitives(m_primitive_type, buffer->GetGPUAddress() + offset);
+    return {};
+}
+
 RM::Result<void> RM::Command::DrawIndexed(uint32_t index_count,
                                           uint32_t instance_count,
                                           uint32_t start_index,
@@ -536,6 +550,24 @@ RM::Result<void> RM::Command::DispatchMesh(DispatchGroup dispatch_group) const
     return {};
 }
 
+RM::Result<void> RM::Command::DispatchMeshIndirect(const Buffer* buffer,
+                                                   const uint64_t offset) const
+{
+#ifdef RIMERA_DEBUG
+    if (!m_render_encoder)
+        return std::unexpected("BeginRenderPass is required before dispatching mesh threadgroups");
+    if (!buffer) return std::unexpected("Cannot dispatch mesh threadgroups from a null indirect buffer");
+    if (offset % 4 || offset + sizeof(DispatchGroup) > buffer->GetLength())
+        return std::unexpected("Invalid indirect mesh dispatch offset");
+#endif
+    if (auto result = FlushArguments(); !result) return result;
+    m_render_encoder->drawMeshThreadgroups(
+        buffer->GetGPUAddress() + offset,
+        MTL::Size(m_threads_per_ampl.x, m_threads_per_ampl.y, m_threads_per_ampl.z),
+        MTL::Size(m_threads_per_mesh.x, m_threads_per_mesh.y, m_threads_per_mesh.z));
+    return {};
+}
+
 RM::Result<void> RM::Command::Dispatch(DispatchGroup dispatch_group)
 {
     if (auto result = FlushArguments(); !result) return result;
@@ -543,6 +575,23 @@ RM::Result<void> RM::Command::Dispatch(DispatchGroup dispatch_group)
     if (transient) GetComputeEncoder();
     m_compute_encoder->dispatchThreadgroups(
         MTL::Size(dispatch_group.x, dispatch_group.y, dispatch_group.z),
+        MTL::Size(m_threads_per_compute.x, m_threads_per_compute.y, m_threads_per_compute.z));
+    EndTransientComputeEncoder(transient);
+    return {};
+}
+
+RM::Result<void> RM::Command::DispatchIndirect(const Buffer* buffer, const uint64_t offset)
+{
+#ifdef RIMERA_DEBUG
+    if (!buffer) return std::unexpected("Cannot dispatch from a null indirect buffer");
+    if (offset % 4 || offset + sizeof(DispatchGroup) > buffer->GetLength())
+        return std::unexpected("Invalid indirect dispatch offset");
+#endif
+    if (auto result = FlushArguments(); !result) return result;
+    const bool transient = !m_compute_encoder;
+    if (transient) GetComputeEncoder();
+    m_compute_encoder->dispatchThreadgroups(
+        buffer->GetGPUAddress() + offset,
         MTL::Size(m_threads_per_compute.x, m_threads_per_compute.y, m_threads_per_compute.z));
     EndTransientComputeEncoder(transient);
     return {};

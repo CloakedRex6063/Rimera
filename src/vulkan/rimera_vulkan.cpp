@@ -385,6 +385,7 @@ namespace RM::Vulkan
             VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
                 VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT);
         add(BarrierStage::IndexInput, VK_PIPELINE_STAGE_2_INDEX_INPUT_BIT);
+        add(BarrierStage::ExecuteIndirect, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT);
         return result;
     }
 

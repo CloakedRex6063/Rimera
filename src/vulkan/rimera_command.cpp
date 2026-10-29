@@ -122,6 +122,21 @@ RM::Result<void> RM::Command::Draw(const uint32_t vertex_count,
     return {};
 }
 
+RM::Result<void> RM::Command::DrawIndirect(const Buffer* buffer, const uint64_t offset) const
+{
+#ifdef RIMERA_DEBUG
+    if (!buffer) return std::unexpected("Cannot draw from a null indirect buffer");
+    if (offset % 4 || offset + sizeof(DrawIndirectArguments) > buffer->GetLength())
+        return std::unexpected("Invalid indirect draw offset");
+#endif
+    vkCmdDrawIndirect(m_command_buffer,
+                      Vulkan::FromNative<VkBuffer>(buffer->GetNativeHandle()),
+                      offset,
+                      1,
+                      sizeof(DrawIndirectArguments));
+    return {};
+}
+
 RM::Result<void> RM::Command::DrawIndexed(const uint32_t index_count,
                                           const uint32_t instance_count,
                                           const uint32_t start_index,
@@ -174,9 +189,38 @@ RM::Result<void> RM::Command::DispatchMesh(const DispatchGroup dispatch_group) c
     return {};
 }
 
+RM::Result<void> RM::Command::DispatchMeshIndirect(const Buffer* buffer,
+                                                   const uint64_t offset) const
+{
+#ifdef RIMERA_DEBUG
+    if (!buffer) return std::unexpected("Cannot dispatch mesh threadgroups from a null indirect buffer");
+    if (offset % 4 || offset + sizeof(DispatchGroup) > buffer->GetLength())
+        return std::unexpected("Invalid indirect mesh dispatch offset");
+#endif
+    vkCmdDrawMeshTasksIndirectEXT(m_command_buffer,
+                                  Vulkan::FromNative<VkBuffer>(buffer->GetNativeHandle()),
+                                  offset,
+                                  1,
+                                  sizeof(DispatchGroup));
+    return {};
+}
+
 RM::Result<void> RM::Command::Dispatch(const DispatchGroup dispatch_group)
 {
     vkCmdDispatch(m_command_buffer, dispatch_group.x, dispatch_group.y, dispatch_group.z);
+    return {};
+}
+
+RM::Result<void> RM::Command::DispatchIndirect(const Buffer* buffer, const uint64_t offset)
+{
+#ifdef RIMERA_DEBUG
+    if (!buffer) return std::unexpected("Cannot dispatch from a null indirect buffer");
+    if (offset % 4 || offset + sizeof(DispatchGroup) > buffer->GetLength())
+        return std::unexpected("Invalid indirect dispatch offset");
+#endif
+    vkCmdDispatchIndirect(m_command_buffer,
+                          Vulkan::FromNative<VkBuffer>(buffer->GetNativeHandle()),
+                          offset);
     return {};
 }
 

@@ -292,6 +292,14 @@ namespace RM
         uint32_t x, y, z;
     };
 
+    struct DrawIndirectArguments
+    {
+        uint32_t vertex_count;
+        uint32_t instance_count;
+        uint32_t start_vertex;
+        uint32_t start_instance;
+    };
+
     enum class PipelineType
     {
         Compute,
@@ -599,6 +607,7 @@ namespace RM
         RenderTarget = 1u << 8,
         DepthStencil = 1u << 9,
         IndexInput = 1u << 10,
+        ExecuteIndirect = 1u << 11,
         BlitSource = PixelShading,
         BlitDestination = RenderTarget,
     };
