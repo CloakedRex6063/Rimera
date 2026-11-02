@@ -35,35 +35,22 @@ void CSMain(uint2 id : SV_DispatchThreadID)
     uint draw_id = vis_id >> 7;
     uint primitive = vis_id & 127;
     
-    ByteAddressBuffer draws = ResourceDescriptorHeap[draw_buffer_index];
-    DrawData draw = LoadElement<DrawData>(draws, draw_id);
+    DrawData draw = LoadDraw(draw_id);
+    ByteAddressBuffer triangles = ResourceDescriptorHeap[triangle_buffer_index];
+    ByteAddressBuffer vertex_indices = ResourceDescriptorHeap[vertex_index_buffer_index];
+    ByteAddressBuffer positions = ResourceDescriptorHeap[position_buffer_index];
+    ByteAddressBuffer normals = ResourceDescriptorHeap[normal_buffer_index];
+    ByteAddressBuffer uvs = ResourceDescriptorHeap[uv_buffer_index];
+    ByteAddressBuffer tangents = ResourceDescriptorHeap[tangent_buffer_index];
 
-    ByteAddressBuffer triangles =
-        ResourceDescriptorHeap[NonUniformResourceIndex(draw.triangle_index)];
-
-    ByteAddressBuffer meshlets =
-        ResourceDescriptorHeap[NonUniformResourceIndex(draw.meshlet_buffer_index)];
-    Meshlet meshlet = LoadElement<Meshlet>(meshlets, draw.meshlet_index);
-
-    ByteAddressBuffer vertex_indices =
-        ResourceDescriptorHeap[NonUniformResourceIndex(draw.vertex_indices_index)];
-
-    ByteAddressBuffer positions =
-        ResourceDescriptorHeap[NonUniformResourceIndex(draw.position_index)];
-    ByteAddressBuffer normals =
-        ResourceDescriptorHeap[NonUniformResourceIndex(draw.normal_index)];
-    ByteAddressBuffer uvs = ResourceDescriptorHeap[NonUniformResourceIndex(draw.uv_index)];
-    ByteAddressBuffer tangents =
-        ResourceDescriptorHeap[NonUniformResourceIndex(draw.tangent_index)];
-
-    uint offset = meshlet.triangle_offset + primitive * 3;
+    uint offset = draw.triangle_offset + primitive * 3;
     uint index0 = LoadByte(triangles, offset);
     uint index1 = LoadByte(triangles, offset + 1);
     uint index2 = LoadByte(triangles, offset + 2);
 
-    uint v0 = LoadElement<uint>(vertex_indices, meshlet.vertex_offset + index0);
-    uint v1 = LoadElement<uint>(vertex_indices, meshlet.vertex_offset + index1);
-    uint v2 = LoadElement<uint>(vertex_indices, meshlet.vertex_offset + index2);
+    uint v0 = LoadElement<uint>(vertex_indices, draw.vertex_offset + index0);
+    uint v1 = LoadElement<uint>(vertex_indices, draw.vertex_offset + index1);
+    uint v2 = LoadElement<uint>(vertex_indices, draw.vertex_offset + index2);
 
     ByteAddressBuffer transforms = ResourceDescriptorHeap[NonUniformResourceIndex(transform_buffer_index)];
     Transform transform = LoadElement<Transform>(transforms, draw.transform_index);

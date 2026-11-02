@@ -28,7 +28,7 @@ RM::Result<void> Model::CheckData(const fastgltf::Asset& asset)
     {
         auto result_bytes = Bytes(asset.buffers[view.bufferIndex].data);
         if (!result_bytes) return std::unexpected(result_bytes.error());
-        auto bytes = std::move(*result_bytes);
+        auto bytes = *result_bytes;
         if (view.byteOffset > bytes.size() || view.byteLength > bytes.size() - view.byteOffset)
             return std::unexpected("glTF buffer view exceeds buffer");
     }
@@ -92,8 +92,8 @@ RM::Result<void> Model::CheckData(const fastgltf::Asset& asset)
             {
                 uint32_t index = 0;
                 std::memcpy(&index,
-                            bytes.data() + index_view.byteOffset + sparse.indicesByteOffset + i
-                            * index_size,
+                            bytes.data() + index_view.byteOffset + sparse.indicesByteOffset +
+                                i * index_size,
                             index_size);
                 if (index >= accessor.count || (i && index <= previous))
                     return std::unexpected("Sparse indices must be ordered and in range");
@@ -104,13 +104,13 @@ RM::Result<void> Model::CheckData(const fastgltf::Asset& asset)
     return {};
 }
 
-template <class T, class F>
+template <class T, std::invocable<T, size_t> F>
 RM::Result<bool> Model::ReadAttribute(const fastgltf::Asset& asset,
-                               const fastgltf::Primitive& primitive,
-                               std::string_view name,
-                               size_t count,
-                               fastgltf::AccessorType type,
-                               F write)
+                                      const fastgltf::Primitive& primitive,
+                                      std::string_view name,
+                                      size_t count,
+                                      fastgltf::AccessorType type,
+                                      F write)
 {
     auto it = primitive.findAttribute(name);
     if (it == primitive.attributes.end()) return false;
@@ -156,8 +156,7 @@ uint32_t Model::PackDirection(const float* direction, glm::vec3 fallback)
     unit = scale > 0 ? glm::normalize(unit / scale) : fallback;
     uint32_t bits = 0;
     for (unsigned i = 0; i < 3; ++i)
-        bits |= (static_cast<uint32_t>(meshopt_quantizeSnorm(unit[i], 10)) & 0x3ffu) << (
-            i * 10);
+        bits |= (static_cast<uint32_t>(meshopt_quantizeSnorm(unit[i], 10)) & 0x3ffu) << (i * 10);
     return bits;
 }
 
@@ -167,8 +166,8 @@ RM::Result<Vertex> Model::PackVertex(const SourceVertex& source)
     Vertex result{};
     for (unsigned i = 0; i < 3; ++i) result.position[i] = source.position[i];
     result.normal = PackDirection(source.normal, {0, 0, 1});
-    result.tangent = PackDirection(source.tangent, {1, 0, 0}) |
-                     ((source.tangent[3] < 0 ? 3u : 1u) << 30);
+    result.tangent =
+        PackDirection(source.tangent, {1, 0, 0}) | ((source.tangent[3] < 0 ? 3u : 1u) << 30);
     result.uv = static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[0])) |
                 (static_cast<uint32_t>(meshopt_quantizeHalf(source.uv[1])) << 16);
     return result;
@@ -181,8 +180,8 @@ struct Model::TangentData
 
 Model::SourceVertex& Model::Corner(const SMikkTSpaceContext* context, int face, int vertex)
 {
-    return (*static_cast<TangentData*>(context->m_pUserData)->vertices)[
-        static_cast<size_t>(face) * 3 + vertex];
+    return (*static_cast<TangentData*>(context->m_pUserData)
+                 ->vertices)[static_cast<size_t>(face) * 3 + vertex];
 }
 
 RM::Result<void> Model::GenerateTangents(std::vector<SourceVertex>& vertices)
@@ -190,28 +189,16 @@ RM::Result<void> Model::GenerateTangents(std::vector<SourceVertex>& vertices)
     TangentData data{&vertices};
     SMikkTSpaceInterface mikkspace{};
     mikkspace.m_getNumFaces = [](const SMikkTSpaceContext* c)
-    {
-        return static_cast<int>(static_cast<TangentData*>(c->m_pUserData)->vertices->size() /
-                                3);
-    };
+    { return static_cast<int>(static_cast<TangentData*>(c->m_pUserData)->vertices->size() / 3); };
     mikkspace.m_getNumVerticesOfFace = [](const SMikkTSpaceContext*, int) { return 3; };
     mikkspace.m_getPosition = [](const SMikkTSpaceContext* c, float* out, int f, int v)
-    {
-        std::copy_n(Corner(c, f, v).position, 3, out);
-    };
+    { std::copy_n(Corner(c, f, v).position, 3, out); };
     mikkspace.m_getNormal = [](const SMikkTSpaceContext* c, float* out, int f, int v)
-    {
-        std::copy_n(Corner(c, f, v).normal, 3, out);
-    };
+    { std::copy_n(Corner(c, f, v).normal, 3, out); };
     mikkspace.m_getTexCoord = [](const SMikkTSpaceContext* c, float* out, int f, int v)
-    {
-        std::copy_n(Corner(c, f, v).uv, 2, out);
-    };
-    mikkspace.m_setTSpaceBasic = [](const SMikkTSpaceContext* c,
-                                    const float* tangent,
-                                    float sign,
-                                    int f,
-                                    int v)
+    { std::copy_n(Corner(c, f, v).uv, 2, out); };
+    mikkspace.m_setTSpaceBasic =
+        [](const SMikkTSpaceContext* c, const float* tangent, float sign, int f, int v)
     {
         auto& vertex = Corner(c, f, v);
         std::copy_n(tangent, 3, vertex.tangent);
@@ -222,11 +209,11 @@ RM::Result<void> Model::GenerateTangents(std::vector<SourceVertex>& vertices)
     return {};
 }
 
-RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
-                           const fastgltf::Asset& asset,
-                           const fastgltf::Primitive& primitive,
-                           uint32_t material_index,
-                           const Material& material)
+RM::Result<Mesh> Model::LoadMesh(SceneGeometry& geometry,
+                                 const fastgltf::Asset& asset,
+                                 const fastgltf::Primitive& primitive,
+                                 uint32_t material_index,
+                                 const Material& material)
 {
     if (primitive.type != fastgltf::PrimitiveType::Triangles || !primitive.targets.empty() ||
         primitive.dracoCompression)
@@ -286,18 +273,17 @@ RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
             return std::unexpected("Material references missing texture coordinates");
     for (const auto& vertex : vertices)
     {
-        if (auto result = ValidateVertex(vertex); !result)
-            return std::unexpected(result.error());
+        if (auto result = ValidateVertex(vertex); !result) return std::unexpected(result.error());
     }
     std::vector<uint32_t> indices;
     if (primitive.indicesAccessor)
     {
         const auto& accessor = asset.accessors[*primitive.indicesAccessor];
-        if (accessor.type != fastgltf::AccessorType::Scalar || accessor.count > UINT32_MAX /
-            sizeof(uint32_t) ||
+        if (accessor.type != fastgltf::AccessorType::Scalar ||
+            accessor.count > UINT32_MAX / sizeof(uint32_t) ||
             (accessor.componentType != fastgltf::ComponentType::UnsignedByte &&
-             accessor.componentType != fastgltf::ComponentType::UnsignedShort && accessor.
-             componentType != fastgltf::ComponentType::UnsignedInt))
+             accessor.componentType != fastgltf::ComponentType::UnsignedShort &&
+             accessor.componentType != fastgltf::ComponentType::UnsignedInt))
             return std::unexpected("Invalid index accessor");
         indices.reserve(accessor.count);
         fastgltf::iterateAccessor<uint32_t>(asset,
@@ -337,8 +323,7 @@ RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
                 auto length = glm::length(normal);
                 normal = length > 0 ? normal / length : glm::vec3(0, 0, 1);
                 for (size_t j = 0; j < 3; ++j)
-                    for (int k = 0; k < 3; ++k)
-                        vertices[i + j].normal[k] = normal[k];
+                    for (int k = 0; k < 3; ++k) vertices[i + j].normal[k] = normal[k];
             }
         }
         if (!tangents && material.textures[2] != UINT16_MAX)
@@ -353,14 +338,16 @@ RM::Result<Mesh*> Model::LoadMesh(RM::Device* device,
         if (!result) return std::unexpected(result.error());
         packed.push_back(*result);
     }
-    return Mesh::Create(device, packed, indices, material_index, material.textures[0]);
+    return Mesh::Create(geometry, packed, indices, material_index, material.textures[0]);
 }
 
-RM::Result<Model*> Model::Create(RM::Device* device, const std::filesystem::path& path)
+RM::Result<Model*> Model::Create(RM::Device* device,
+                                 const std::filesystem::path& path,
+                                 SceneGeometry& geometry)
 {
     auto* object = new (std::nothrow) Model();
     if (!object) return std::unexpected("Object allocation failed");
-    auto result = object->Initialize(device, path);
+    auto result = object->Initialize(device, path, geometry);
     if (!result)
     {
         auto error = std::move(result.error());
@@ -370,7 +357,9 @@ RM::Result<Model*> Model::Create(RM::Device* device, const std::filesystem::path
     return object;
 }
 
-RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::path& path)
+RM::Result<void> Model::Initialize(RM::Device* device,
+                                   const std::filesystem::path& path,
+                                   SceneGeometry& geometry)
 {
     if (!device) return std::unexpected("Model requires a device");
     const std::filesystem::path portable_path = FileIO::ResourcePath() + path.string();
@@ -378,10 +367,10 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
     auto file = fastgltf::GltfDataBuffer::FromPath(portable_path);
     if (file.error() != fastgltf::Error::None)
         return std::unexpected("Cannot open glTF: " + portable_path.string());
-    auto parsed = parser.loadGltf(file.get(),
-                                  portable_path.parent_path(),
-                                  fastgltf::Options::LoadExternalBuffers |
-                                  fastgltf::Options::LoadExternalImages);
+    auto parsed = parser.loadGltf(
+        file.get(),
+        portable_path.parent_path(),
+        fastgltf::Options::LoadExternalBuffers | fastgltf::Options::LoadExternalImages);
     if (parsed.error() != fastgltf::Error::None)
         return std::unexpected("glTF parse failed: " +
                                std::string(fastgltf::getErrorMessage(parsed.error())));
@@ -405,12 +394,10 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
         if (source.samplerIndex)
         {
             const auto& s = asset.samplers[*source.samplerIndex];
-            sampler.mag_filter = s.magFilter
-                                     ? static_cast<TextureFilter>(*s.magFilter)
-                                     : TextureFilter::Default;
-            sampler.min_filter = s.minFilter
-                                     ? static_cast<TextureFilter>(*s.minFilter)
-                                     : TextureFilter::Default;
+            sampler.mag_filter =
+                s.magFilter ? static_cast<TextureFilter>(*s.magFilter) : TextureFilter::Default;
+            sampler.min_filter =
+                s.minFilter ? static_cast<TextureFilter>(*s.minFilter) : TextureFilter::Default;
             sampler.wrap_s = static_cast<TextureWrap>(s.wrapS);
             sampler.wrap_t = static_cast<TextureWrap>(s.wrapT);
         }
@@ -462,11 +449,10 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
         material.metallic = source.pbrData.metallicFactor;
         material.roughness = source.pbrData.roughnessFactor;
         material.alpha_cutoff = source.alphaCutoff;
-        material.flags = (source.alphaMode == fastgltf::AlphaMode::Mask
-                              ? 1
-                              : source.alphaMode == fastgltf::AlphaMode::Blend
-                              ? 2
-                              : 0) | (source.doubleSided ? 4 : 0);
+        material.flags = (source.alphaMode == fastgltf::AlphaMode::Mask    ? 1
+                          : source.alphaMode == fastgltf::AlphaMode::Blend ? 2
+                                                                           : 0) |
+                         (source.doubleSided ? 4 : 0);
         auto slot = [&](const auto& info, unsigned slot_index, bool srgb) -> RM::Result<void>
         {
             if (!info) return {};
@@ -489,8 +475,7 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
             return std::unexpected(result.error());
         if (source.normalTexture) material.normal_scale = source.normalTexture->scale;
         if (source.occlusionTexture)
-            material.occlusion_strength = source.occlusionTexture->
-                                                 strength;
+            material.occlusion_strength = source.occlusionTexture->strength;
         m_materials.push_back(material);
     }
     const auto default_material = static_cast<uint32_t>(m_materials.size());
@@ -504,7 +489,7 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
                                 ? static_cast<uint32_t>(*primitive.materialIndex)
                                 : default_material;
             mesh_map[i].push_back(static_cast<uint32_t>(m_meshes.size()));
-            auto mesh = LoadMesh(device, asset, primitive, material, m_materials[material]);
+            auto mesh = LoadMesh(geometry, asset, primitive, material, m_materials[material]);
             if (!mesh) return std::unexpected(mesh.error());
             m_meshes.push_back(*mesh);
         }
@@ -519,8 +504,7 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
         node.name = source.name;
         auto matrix = fastgltf::getTransformMatrix(source);
         for (int c = 0; c < 4; ++c)
-            for (int r = 0; r < 4; ++r)
-                node.local_transform[c][r] = matrix[c][r];
+            for (int r = 0; r < 4; ++r) node.local_transform[c][r] = matrix[c][r];
         if (source.meshIndex) node.meshes = mesh_map[*source.meshIndex];
         for (auto child : source.children)
         {
@@ -533,9 +517,7 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
     }
     std::vector<uint32_t> pending;
     for (size_t i = 0; i < m_nodes.size(); ++i)
-        if (m_nodes[i].parent == UINT32_MAX)
-            pending.
-                push_back(static_cast<uint32_t>(i));
+        if (m_nodes[i].parent == UINT32_MAX) pending.push_back(static_cast<uint32_t>(i));
     auto all_roots = pending;
     size_t visited = 0;
     while (!pending.empty())
@@ -560,12 +542,12 @@ RM::Result<void> Model::Initialize(RM::Device* device, const std::filesystem::pa
             m_scene_roots.push_back(static_cast<uint32_t>(root));
         }
     }
-    else m_scene_roots = std::move(all_roots);
+    else
+        m_scene_roots = std::move(all_roots);
     return {};
 }
 
 Model::~Model()
 {
-    for (auto* mesh : m_meshes) delete mesh;
     for (auto* texture : m_textures) delete texture;
 }

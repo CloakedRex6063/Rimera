@@ -3,11 +3,10 @@
 #include "array"
 #include "memory"
 #include "span"
+#include "vector"
 #include "type_traits"
 #include "cstddef"
 #include "glm/glm.hpp"
-
-namespace RM { class Device; }
 
 struct Material
 {
@@ -43,51 +42,46 @@ static_assert(sizeof(Vertex) == 24 && std::is_trivially_copyable_v<Vertex>);
 static_assert(offsetof(Vertex, position) == 0 && offsetof(Vertex, normal) == 12 &&
               offsetof(Vertex, tangent) == 16 && offsetof(Vertex, uv) == 20);
 
-class Mesh
+struct Bounds
 {
-public:
-    ~Mesh();
-    [[nodiscard]] static RM::Result<Mesh*> Create(RM::Device* device,
-                                                  std::span<const Vertex> vertices,
-                                                  std::span<const uint32_t> indices,
-                                                  uint32_t material_index,
-                                                  uint16_t texture_index = UINT16_MAX);
-    Mesh(const Mesh&) = delete;
-    Mesh& operator=(const Mesh&) = delete;
-    Mesh(Mesh&&) = delete;
-    Mesh& operator=(Mesh&&) = delete;
+    glm::vec3 center{};
+    float radius{};
 
-    [[nodiscard]] RM::Buffer* GetPositionBuffer() const { return m_position_buffer; }
-    [[nodiscard]] RM::Buffer* GetNormalBuffer() const { return m_normal_buffer; }
-    [[nodiscard]] RM::Buffer* GetUVBuffer() const { return m_uv_buffer; }
-    [[nodiscard]] RM::Buffer* GetTangentBuffer() const { return m_tangent_buffer; }
-    [[nodiscard]] RM::Buffer* GetVertexIndexBuffer() const { return m_vertex_index_buffer; }
-    [[nodiscard]] RM::Buffer* GetTriangleBuffer() const { return m_triangle_buffer; }
-    [[nodiscard]] RM::Buffer* GetMeshletBuffer() const { return m_meshlet_buffer; }
-    [[nodiscard]] uint32_t GetVertexCount() const { return m_vertex_count; }
-    [[nodiscard]] uint32_t GetTriangleCount() const { return m_triangle_count; }
-    [[nodiscard]] uint32_t GetMeshletCount() const { return m_meshlet_count; }
-    [[nodiscard]] uint32_t GetMaterialIndex() const { return m_material_index; }
-    [[nodiscard]] uint16_t GetTextureIndex() const { return m_texture_index; }
-    [[nodiscard]] RM::Result<RM::Buffer*> GenerateIndexBuffer() const;
+    glm::vec3 cone_apex{};
+    // x / 127.0 to get original value
+    int8_t cone_axis[3]{};
+    int8_t cone_cutoff{};
+};
+static_assert(sizeof(Bounds) == 32 && std::is_trivially_copyable_v<Bounds>);
 
-private:
-    Mesh() = default;
-    RM::Result<RM::Buffer*> Upload(const void* data, size_t bytes) const;
-    RM::Result<void> Initialize(RM::Device* device,
-                                std::span<const Vertex> vertices,
-                                std::span<const uint32_t> indices,
-                                uint32_t material_index,
-                                uint16_t texture_index);
+struct Meshlet
+{
+    uint32_t vertex_offset{};
+    uint32_t triangle_offset{};
+    uint8_t vertex_count{};
+    uint8_t triangle_count{};
+};
 
-    RM::Device* m_device = nullptr;
-    RM::Buffer* m_position_buffer = nullptr;
-    RM::Buffer* m_normal_buffer = nullptr;
-    RM::Buffer* m_uv_buffer = nullptr;
-    RM::Buffer* m_tangent_buffer = nullptr;
-    RM::Buffer* m_vertex_index_buffer = nullptr;
-    RM::Buffer* m_triangle_buffer = nullptr;
-    RM::Buffer* m_meshlet_buffer = nullptr;
-    uint32_t m_vertex_count{}, m_triangle_count{}, m_meshlet_count{}, m_material_index{};
-    uint16_t m_texture_index{};
+struct SceneGeometry
+{
+    std::vector<glm::vec3> positions;
+    std::vector<uint32_t> normals;
+    std::vector<uint32_t> uvs;
+    std::vector<uint32_t> tangents;
+    std::vector<uint32_t> vertex_indices;
+    std::vector<uint8_t> triangles;
+    std::vector<Meshlet> meshlets;
+    std::vector<Bounds> bounds;
+};
+
+struct Mesh
+{
+    [[nodiscard]] static RM::Result<Mesh> Create(SceneGeometry& geometry,
+                                                 std::span<const Vertex> vertices,
+                                                 std::span<const uint32_t> indices,
+                                                 uint32_t material_index,
+                                                 uint16_t texture_index = UINT16_MAX);
+
+    uint32_t first_meshlet{}, meshlet_count{}, vertex_count{}, triangle_count{}, material_index{};
+    uint16_t texture_index{};
 };

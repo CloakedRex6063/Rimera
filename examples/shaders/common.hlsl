@@ -8,24 +8,21 @@ struct Transform
 
 struct DrawData
 {
-    uint meshlet_index;
-    uint position_index;
-    uint normal_index;
-    uint uv_index;
-    uint tangent_index;
-    uint vertex_indices_index;
-    uint triangle_index;
-    uint meshlet_buffer_index;
     uint transform_index;
-    uint material_index;
-};
-
-struct Meshlet
-{
     uint vertex_offset;
     uint triangle_offset;
+    uint material_index;
     uint vertex_count;
     uint triangle_count;
+};
+
+struct Bounds
+{
+    float3 center;
+    float radius;
+    float3 cone_apex;
+    float3 cone_axis;
+    float cone_cutoff;
 };
 
 struct Material
@@ -61,10 +58,17 @@ cbuffer Scene : register(b0)
     uint material_buffer_index;
     uint texture_buffer_index;
     uint sampler_index;
+    uint position_buffer_index;
+    uint uv_buffer_index;
+    uint normal_buffer_index;
+    uint tangent_buffer_index;
+    uint vertex_index_buffer_index;
+    uint triangle_buffer_index;
+    uint bounds_buffer_index;
     float3 camera_position;
+    uint meshlet_count;
     column_major float4x4 view_projection;
     column_major float4x4 inverse_view_projection;
-    uint padding;
 }
 
 template <typename T>
@@ -76,6 +80,35 @@ T LoadElement(ByteAddressBuffer buffer, uint index)
 uint LoadByte(ByteAddressBuffer buffer, uint offset)
 {
     return (buffer.Load(offset & ~3u) >> ((offset & 3u) * 8u)) & 0xffu;
+}
+
+DrawData LoadDraw(uint draw_id)
+{
+    ByteAddressBuffer draws = ResourceDescriptorHeap[draw_buffer_index];
+    uint4 packed = draws.Load4(draw_id * 16);
+    DrawData draw;
+    draw.transform_index = packed.x;
+    draw.vertex_offset = packed.y;
+    draw.triangle_offset = packed.z;
+    draw.material_index = packed.w & 0xffffu;
+    draw.vertex_count = (packed.w >> 16) & 0xffu;
+    draw.triangle_count = packed.w >> 24;
+    return draw;
+}
+
+Bounds LoadBounds(uint draw_id)
+{
+    ByteAddressBuffer bounds_buffer = ResourceDescriptorHeap[bounds_buffer_index];
+    uint4 sphere = bounds_buffer.Load4(draw_id * 32);
+    uint4 cone = bounds_buffer.Load4(draw_id * 32 + 16);
+    int4 cone_bytes = asint(uint4(cone.w << 24, cone.w << 16, cone.w << 8, cone.w)) >> 24;
+    Bounds bounds;
+    bounds.center = asfloat(sphere.xyz);
+    bounds.radius = asfloat(sphere.w);
+    bounds.cone_apex = asfloat(cone.xyz);
+    bounds.cone_axis = float3(cone_bytes.xyz) / 127.0;
+    bounds.cone_cutoff = float(cone_bytes.w) / 127.0;
+    return bounds;
 }
 
 struct TangentFrame

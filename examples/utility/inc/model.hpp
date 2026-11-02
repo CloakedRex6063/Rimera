@@ -3,6 +3,8 @@
 #include "texture.hpp"
 #include "glm/glm.hpp"
 #include "fastgltf/types.hpp"
+#include "concepts"
+#include "type_traits"
 #include "string"
 #include "string_view"
 #include "vector"
@@ -23,18 +25,20 @@ class Model
 public:
     ~Model();
     [[nodiscard]] static RM::Result<Model*> Create(RM::Device* device,
-                                                   const std::filesystem::path& path);
+                                                   const std::filesystem::path& path,
+                                                   SceneGeometry& geometry);
     Model(const Model&) = delete;
     Model& operator=(const Model&) = delete;
     Model(Model&&) = delete;
     Model& operator=(Model&&) = delete;
     [[nodiscard]] const std::vector<ModelNode>& GetNodes() const { return m_nodes; }
     [[nodiscard]] const std::vector<Texture*>& GetTextures() const { return m_textures; }
-    [[nodiscard]] const std::vector<Mesh*>& GetMeshes() const { return m_meshes; }
+    [[nodiscard]] const std::vector<Mesh>& GetMeshes() const { return m_meshes; }
     [[nodiscard]] const std::vector<Material>& GetMaterials() const { return m_materials; }
     [[nodiscard]] const std::vector<uint32_t>& GetSceneRoots() const { return m_scene_roots; }
 
     template <class F>
+        requires std::is_invocable_r_v<RM::Result<void>, F&, const Mesh&, uint32_t, uint32_t>
     [[nodiscard]] RM::Result<void> ForEachMesh(F&& visit) const
     {
         auto pending = m_scene_roots;
@@ -46,7 +50,7 @@ public:
             pending.insert(pending.end(), node.children.begin(), node.children.end());
             for (const auto mesh_index : node.meshes)
             {
-                if (auto result = visit(*m_meshes[mesh_index], mesh_index, node_index);
+                if (auto result = visit(m_meshes[mesh_index], mesh_index, node_index);
                     !result)
                     return std::unexpected(result.error());
             }
@@ -55,12 +59,15 @@ public:
     }
 
     template <class F>
+        requires std::is_invocable_r_v<RM::Result<void>, F&, const Mesh&, uint32_t, uint32_t>
     [[nodiscard]] RM::Result<void> ForEachMeshlet(F&& visit) const
     {
         return ForEachMesh(
             [&](const Mesh& mesh, uint32_t, uint32_t node_index) -> RM::Result<void>
             {
-                for (uint32_t meshlet = 0; meshlet < mesh.GetMeshletCount(); ++meshlet)
+                for (uint32_t meshlet = mesh.first_meshlet;
+                     meshlet < mesh.first_meshlet + mesh.meshlet_count;
+                     ++meshlet)
                 {
                     if (auto result = visit(mesh, meshlet, node_index); !result)
                         return std::unexpected(result.error());
@@ -75,7 +82,7 @@ private:
 
     static RM::Result<std::span<const std::byte>> Bytes(const fastgltf::DataSource& source);
     static RM::Result<void> CheckData(const fastgltf::Asset& asset);
-    template <class T, class F>
+    template <class T, std::invocable<T, size_t> F>
     static RM::Result<bool> ReadAttribute(const fastgltf::Asset& asset,
                                           const fastgltf::Primitive& primitive,
                                           std::string_view name,
@@ -87,17 +94,19 @@ private:
     static RM::Result<Vertex> PackVertex(const SourceVertex& source);
     static SourceVertex& Corner(const SMikkTSpaceContext* context, int face, int vertex);
     static RM::Result<void> GenerateTangents(std::vector<SourceVertex>& vertices);
-    static RM::Result<Mesh*> LoadMesh(RM::Device* device,
-                                      const fastgltf::Asset& asset,
-                                      const fastgltf::Primitive& primitive,
-                                      uint32_t material_index,
-                                      const Material& material);
+    static RM::Result<Mesh> LoadMesh(SceneGeometry& geometry,
+                                     const fastgltf::Asset& asset,
+                                     const fastgltf::Primitive& primitive,
+                                     uint32_t material_index,
+                                     const Material& material);
     Model() = default;
-    RM::Result<void> Initialize(RM::Device* device, const std::filesystem::path& path);
+    RM::Result<void> Initialize(RM::Device* device,
+                                const std::filesystem::path& path,
+                                SceneGeometry& geometry);
 
     std::vector<ModelNode> m_nodes;
     std::vector<Texture*> m_textures;
-    std::vector<Mesh*> m_meshes;
+    std::vector<Mesh> m_meshes;
     std::vector<Material> m_materials;
     std::vector<uint32_t> m_scene_roots;
 };

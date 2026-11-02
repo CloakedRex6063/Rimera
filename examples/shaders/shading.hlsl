@@ -37,8 +37,7 @@ void CSMain(uint2 id : SV_DispatchThreadID)
     
     uint draw_id = vis_id >> 7;
     
-    ByteAddressBuffer draws = ResourceDescriptorHeap[draw_buffer_index];
-    DrawData draw = LoadElement<DrawData>(draws, draw_id);
+    DrawData draw = LoadDraw(draw_id);
     ByteAddressBuffer materials = ResourceDescriptorHeap[material_buffer_index];
     Material material = LoadElement<Material>(materials, draw.material_index);
     
