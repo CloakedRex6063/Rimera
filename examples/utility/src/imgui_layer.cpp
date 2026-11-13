@@ -451,6 +451,7 @@ RM::Result<void> ImGuiLayer::Record(RM::RenderGraphContext& context,
     uint32_t global_vertex = 0;
     uint32_t global_index = 0;
     std::array<uint32_t, 2> bound{constants.texture_index, constants.vertex_offset};
+    float bound_scale = constants.sdr_white_scale;
     for (const ImDrawList* list : draw_data->CmdLists)
     {
         for (const ImDrawCmd& draw : list->CmdBuffer)
@@ -461,11 +462,13 @@ RM::Result<void> ImGuiLayer::Record(RM::RenderGraphContext& context,
                 {
                     draw.UserCallback(list, &draw);
                     bound = {UINT32_MAX, UINT32_MAX};
+                    bound_scale = -1.f;
                     continue;
                 }
                 result = BindRenderState(command, *pipeline, frame, constants, size);
                 if (!result) break;
                 bound = {constants.texture_index, constants.vertex_offset};
+                bound_scale = constants.sdr_white_scale;
                 continue;
             }
 
@@ -495,6 +498,16 @@ RM::Result<void> ImGuiLayer::Record(RM::RenderGraphContext& context,
                                                     offsetof(Constants, texture_index));
                 if (!result) break;
                 bound = draw_constants;
+            }
+            const float color_scale =
+                (draw.GetTexID() & kGraphTextureBit) ? 1.f : constants.sdr_white_scale;
+            if (color_scale != bound_scale)
+            {
+                result = command->BindRootConstants(&color_scale,
+                                                    sizeof(color_scale),
+                                                    offsetof(Constants, sdr_white_scale));
+                if (!result) break;
+                bound_scale = color_scale;
             }
             result = command->DrawIndexed(draw.ElemCount, 1, global_index + draw.IdxOffset, 0, 0);
             if (!result) break;

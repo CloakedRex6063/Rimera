@@ -1,5 +1,4 @@
 #pragma once
-#include "dxc/dxcapi.h"
 #include "rimera_shader.hpp"
 
 namespace RM

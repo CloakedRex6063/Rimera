@@ -17,9 +17,10 @@ public:
         float headroom;
         float sdr_white_scale;
         uint32_t hdr;
+        uint32_t apply_curve;
     };
 
-    static_assert(sizeof(TonemapData) == 12);
+    static_assert(sizeof(TonemapData) == 16);
 
     struct DirLight
     {
@@ -37,7 +38,7 @@ public:
     static constexpr auto kUVFormat = RM::Format::R32_UInt;
     static constexpr auto kDerivFormat = RM::Format::RGBA16_Float;
     static constexpr auto kTangentFrameFormat = RM::Format::RGBA16_UInt;
-    static constexpr auto kAlbedoFormat = RM::Format::RGBA8_UNorm_sRGB;
+    static constexpr auto kAlbedoFormat = RM::Format::RGBA8_UNorm;
     static constexpr auto kNormalFormat = RM::Format::RG16_UNorm;
     static constexpr auto kRoughOcclusionFormat = RM::Format::RG8_UNorm;
     static constexpr auto kEmissiveFormat = RM::Format::RG11B10_Float;

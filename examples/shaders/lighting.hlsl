@@ -33,7 +33,7 @@ void CSMain(uint2 id : SV_DispatchThreadID)
     RWTexture2D<float4> output = ResourceDescriptorHeap[output_index];
     if (visibility.Load(int3(id, 0)) == 0)
     {
-        output[id] = float4(0.392157, 0.584314, 0.929412, 1.0);
+        output[id] = float4(0.127438, 0.300544, 0.846873, 1.0);
         return;
     }
 

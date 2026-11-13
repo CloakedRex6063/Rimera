@@ -103,7 +103,7 @@ int main()
     }
     auto* graph = *result_graph;
 
-    auto result_scene = MeshShaderScene::Create(device, "assets/chess.glb");
+    auto result_scene = MeshShaderScene::Create(device, "assets/damaged_helmet.glb");
     if (!result_scene)
     {
         std::cerr << result_scene.error() << '\n';
@@ -357,7 +357,8 @@ int main()
             .RootConstants(static_cast<uint32_t>(view_type), 12)
             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});
 
-        auto tonemap_input = view_type == ViewType::Lit ? lit : debug;
+        const bool is_lit = view_type == ViewType::Lit;
+        const auto tonemap_input = is_lit ? lit : debug;
 
         graph->AddComputePass("Tonemap")
             .Read(tonemap_input)
@@ -370,6 +371,7 @@ int main()
                     .headroom = display_info.headroom,
                     .sdr_white_scale = display_info.sdr_white_scale,
                     .hdr = display_info.hdr ? 1u : 0u,
+                    .apply_curve = is_lit ? 1u : 0u,
                 },
                 8)
             .Dispatch({.x = (render_size.x + 7) / 8, .y = (render_size.y + 7) / 8, .z = 1});

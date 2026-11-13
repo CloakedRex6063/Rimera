@@ -27,7 +27,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     uint value = visibility.Load(int3(id.xy, 0));
     if (value == 0)
     {
-        color[id.xy] = float4(0.392157, 0.584314, 0.929412, 1.0);
+        color[id.xy] = float4(0.127438, 0.300544, 0.846873, 1.0);
         return;
     }
 

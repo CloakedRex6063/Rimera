@@ -1,3 +1,4 @@
+#include "dxc/dxcapi.h"
 #include "rimera_helpers.hpp"
 #include "rimera_device.hpp"
 #include "rimera_builders.hpp"
