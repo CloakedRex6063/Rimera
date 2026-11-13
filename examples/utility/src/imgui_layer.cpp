@@ -352,9 +352,7 @@ void ImGuiLayer::AddViewportPass(RM::RenderGraph* graph, ImGuiViewport* viewport
 
     auto pass = graph->AddRenderPass("ImGui Viewport");
     pass.Color(graph->ImportTexture(back_buffer, kPresentState, kPresentState),
-               viewport->Flags & ImGuiViewportFlags_NoRendererClear
-                   ? RM::LoadOp::DontCare
-                   : RM::LoadOp::Clear,
+               RM::LoadOp::Clear,
                RM::StoreOp::Store,
                {0.f, 0.f, 0.f, 1.f});
     for (const auto texture : m_graph_textures)
