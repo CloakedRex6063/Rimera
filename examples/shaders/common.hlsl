@@ -72,9 +72,21 @@ cbuffer Scene : register(b0)
 }
 
 template <typename T>
-T LoadElement(ByteAddressBuffer buffer, uint index)
+T LoadElement(ByteAddressBuffer buffer, uint index, uint offset = 0)
 {
-    return buffer.Load<T>(index * sizeof(T));
+    return buffer.Load<T>(offset + index * sizeof(T));
+}
+
+template <typename T>
+T LoadElement(RWByteAddressBuffer buffer, uint index, uint offset = 0)
+{
+    return buffer.Load<T>(offset + index * sizeof(T));
+}
+
+template <typename T>
+void StoreElement(RWByteAddressBuffer buffer, uint index, T value)
+{
+    buffer.Store<T>(index * sizeof(T), value);
 }
 
 uint LoadByte(ByteAddressBuffer buffer, uint offset)

@@ -1,7 +1,6 @@
 #pragma once
 #include "glm/glm.hpp"
-
-class Window;
+#include "window.hpp"
 
 enum class CameraMode
 {
@@ -9,10 +8,22 @@ enum class CameraMode
     Fly,
 };
 
+struct CameraKeys
+{
+    Key forward = Key::W;
+    Key back = Key::S;
+    Key left = Key::A;
+    Key right = Key::D;
+    Key up = Key::E;
+    Key down = Key::Q;
+    Key sprint = Key::Shift;
+    Key toggle_mode = Key::Tab;
+};
+
 class Camera
 {
 public:
-    explicit Camera(CameraMode mode = CameraMode::Orbit);
+    explicit Camera(CameraMode mode = CameraMode::Fly);
 
     void Update(const Window& window, float delta_time);
 
@@ -21,8 +32,10 @@ public:
     void SetPerspective(float fov_y, float near_plane, float far_plane);
     void SetMoveSpeed(float speed) { m_move_speed = speed; }
     void SetLookSensitivity(float sensitivity) { m_look_sensitivity = sensitivity; }
+    void SetKeys(const CameraKeys& keys) { m_keys = keys; }
 
     [[nodiscard]] CameraMode GetMode() const { return m_mode; }
+    [[nodiscard]] const CameraKeys& GetKeys() const { return m_keys; }
     [[nodiscard]] glm::vec3 GetPosition() const { return m_position; }
     [[nodiscard]] glm::vec3 GetTarget() const { return m_target; }
     [[nodiscard]] glm::vec3 GetForward() const;
@@ -39,6 +52,7 @@ private:
     void Rotate(glm::vec2 mouse_delta);
 
     CameraMode m_mode;
+    CameraKeys m_keys;
     glm::vec3 m_position{0.f, 0.f, 5.f};
     glm::vec3 m_target{0.f};
     float m_distance = 5.f;

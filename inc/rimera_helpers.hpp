@@ -1,6 +1,8 @@
 #pragma once
 #include "rimera_shader.hpp"
 
+typedef signed int HRESULT;
+
 namespace RM
 {
     class Device;

@@ -36,103 +36,31 @@ constexpr const char* kViewTypesNames[] = {
 
 int main()
 {
-    auto window_result = Window::Create();
-    if (!window_result)
-    {
-        std::cerr << window_result.error() << '\n';
-        return 1;
-    }
-    auto* window = *window_result;
+    auto* window = RM::Unwrap(Window::Create());
     auto size = window->GetFramebufferSize();
-    auto result_device = RM::CreateDevice({});
-    if (!result_device)
-    {
-        std::cerr << result_device.error() << '\n';
-        delete window;
-        return 1;
-    }
-    auto* device = *result_device;
-    auto result_queue = device->CreateQueue(RM::QueueType::Graphics);
-    if (!result_queue)
-    {
-        std::cerr << result_queue.error() << '\n';
-        RM::DestroyDevice(device);
-        delete window;
-        return 1;
-    }
-    auto* queue = *result_queue;
+    auto* device = RM::Unwrap(RM::CreateDevice({}));
+    auto* queue = RM::Unwrap(device->CreateQueue(RM::QueueType::Graphics));
     const NativeWindow native_window = window->GetNativeWindow();
-    auto result_swapchain = device->CreateSwapchain(queue,
-                                                    {
-                                                        .window = native_window.window,
-                                                        .width = size.x,
-                                                        .height = size.y,
-                                                        .display = native_window.display,
-                                                    });
-    if (!result_swapchain)
-    {
-        std::cerr << result_swapchain.error() << '\n';
-        device->DestroyImmediate(queue);
-        RM::DestroyDevice(device);
-        delete window;
-        return 1;
-    }
-    auto* swapchain = *result_swapchain;
-    auto result_command_ring = device->CreateCommandRing(RM::CommandType::Graphics);
-    if (!result_command_ring)
-    {
-        std::cerr << result_command_ring.error() << '\n';
-        device->DestroyImmediate(swapchain);
-        device->DestroyImmediate(queue);
-        RM::DestroyDevice(device);
-        delete window;
-        return 1;
-    }
-    auto* command_ring = *result_command_ring;
+    auto* swapchain = RM::Unwrap(device->CreateSwapchain(queue,
+                                                         {
+                                                             .window = native_window.window,
+                                                             .width = size.x,
+                                                             .height = size.y,
+                                                             .display = native_window.display,
+                                                         }));
+    auto* command_ring = RM::Unwrap(device->CreateCommandRing(RM::CommandType::Graphics));
 
-    auto result_graph = device->CreateRenderGraph();
-    if (!result_graph)
-    {
-        std::cerr << result_graph.error() << '\n';
-        device->DestroyImmediate(command_ring);
-        device->DestroyImmediate(swapchain);
-        device->DestroyImmediate(queue);
-        RM::DestroyDevice(device);
-        delete window;
-        return 1;
-    }
-    auto* graph = *result_graph;
+    auto* graph = RM::Unwrap(device->CreateRenderGraph());
 
-    auto result_scene = MeshShaderScene::Create(device, "assets/damaged_helmet.glb");
-    if (!result_scene)
-    {
-        std::cerr << result_scene.error() << '\n';
-        device->DestroyImmediate(graph);
-        device->DestroyImmediate(command_ring);
-        device->DestroyImmediate(swapchain);
-        device->DestroyImmediate(queue);
-        RM::DestroyDevice(device);
-        delete window;
-        return 1;
-    }
-    auto* scene = *result_scene;
+    auto* scene = RM::Unwrap(MeshShaderScene::Create(device, "assets/damaged_helmet.glb"));
 
-    int exit_code = 0;
     constexpr RM::ResourceState present{.layout = RM::BarrierLayout::Present};
 
     Camera camera;
     camera.LookAt({0.f, 0.f, 5.f}, {0.f, 0.f, 0.f});
     auto previous_time = std::chrono::steady_clock::now();
 
-    ImGuiLayer* imgui;
-    auto result_imgui = ImGuiLayer::Create(device, queue, window, MeshShaderScene::kColorFormat);
-    if (!result_imgui)
-    {
-        std::cerr << result_imgui.error() << '\n';
-        exit_code = 1;
-        return exit_code;
-    }
-    imgui = result_imgui.value();
+    auto* imgui = RM::Unwrap(ImGuiLayer::Create(device, queue, window, MeshShaderScene::kColorFormat));
 
     auto view_type = ViewType::Lit;
     MeshShaderScene::DirLight dir_light{.direction = {},
@@ -144,7 +72,6 @@ int main()
     while (window->IsRunning())
     {
         window->Tick();
-        if (!window->IsRunning()) break;
 
         const auto time = std::chrono::steady_clock::now();
         const float delta_time = std::chrono::duration<float>(time - previous_time).count();
@@ -153,15 +80,7 @@ int main()
         if (window->IsResized())
         {
             size = window->GetFramebufferSize();
-            if (size.x && size.y)
-            {
-                if (auto result = swapchain->Resize(size.x, size.y); !result)
-                {
-                    std::cerr << result.error() << '\n';
-                    exit_code = 1;
-                    break;
-                }
-            }
+            RM::Unwrap(swapchain->Resize(size.x, size.y));
         }
         if (!size.x || !size.y) continue;
 
@@ -173,27 +92,13 @@ int main()
         camera.SetAspect(static_cast<float>(viewport_size.x) / static_cast<float>(viewport_size.y));
         const glm::uvec2 render_size = viewport_size;
 
-        if (camera_input && window->IsKeyPressed(Key::Tab))
-            camera.SetMode(camera.GetMode() == CameraMode::Orbit ? CameraMode::Fly
-                                                                 : CameraMode::Orbit);
-
         const glm::mat4 view_projection = camera.GetViewProjection();
         const RM::DisplayInfo display_info = swapchain->GetDisplayInfo();
         imgui->SetDisplayInfo(display_info);
 
-        if (auto result = device->NewFrame(); !result)
-        {
-            std::cerr << result.error() << '\n';
-            exit_code = 1;
-            break;
-        }
+        RM::Unwrap(device->NewFrame());
 
-        if (auto result = swapchain->Acquire(); !result)
-        {
-            std::cerr << result.error() << '\n';
-            exit_code = 1;
-            break;
-        }
+        RM::Unwrap(swapchain->Acquire());
 
         auto* scene_buffer = scene->UpdateScene(view_projection, camera.GetPosition());
         auto* command = command_ring->GetCurrent();
@@ -421,45 +326,24 @@ int main()
 
         // graph->AddCopyPass("Backbuffer Blit").Blit(pp, output);
 
-        if (auto result = graph->Execute(command); !result)
-        {
-            std::cerr << result.error() << '\n';
-            exit_code = 1;
-            command->End();
-            break;
-        }
+        RM::Unwrap(graph->Execute(command));
 
         command->End();
 
         std::vector swapchains{swapchain};
         imgui->GetAcquiredSwapchains(swapchains);
-        if (auto result = queue->Submit(RM::SubmitBuilder()
-                                            .Execute(command)
-                                            .Signal(device->GetFrameSignal())
-                                            .Present(swapchains)
-                                            .Build());
-            !result)
-        {
-            std::cerr << result.error() << '\n';
-            exit_code = 1;
-            break;
-        }
+        RM::Unwrap(queue->Submit(RM::SubmitBuilder()
+                                     .Execute(command)
+                                     .Signal(device->GetFrameSignal())
+                                     .Present(swapchains)
+                                     .Build()));
 
-        if (auto result = swapchain->Present(); !result)
-        {
-            std::cerr << result.error() << '\n';
-            exit_code = 1;
-            break;
-        }
+        RM::Unwrap(swapchain->Present());
         imgui->Present();
 
         command_ring->Next();
     }
-    if (auto result = queue->WaitIdle(); !result)
-    {
-        std::cerr << result.error() << '\n';
-        exit_code = 1;
-    }
+    RM::Unwrap(queue->WaitIdle());
     device->DestroyImmediate(graph);
     ImGuiLayer::Destroy(imgui);
     delete scene;
@@ -468,5 +352,5 @@ int main()
     device->DestroyImmediate(queue);
     RM::DestroyDevice(device);
     delete window;
-    return exit_code;
+    return 0;
 }

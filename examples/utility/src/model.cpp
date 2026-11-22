@@ -480,6 +480,7 @@ RM::Result<void> Model::Initialize(RM::Device* device,
     }
     const auto default_material = static_cast<uint32_t>(m_materials.size());
     m_materials.emplace_back();
+    std::vector<uint32_t> untextured_materials(m_materials.size(), UINT32_MAX);
     std::vector<std::vector<uint32_t>> mesh_map(asset.meshes.size());
     for (size_t i = 0; i < asset.meshes.size(); ++i)
     {
@@ -488,6 +489,19 @@ RM::Result<void> Model::Initialize(RM::Device* device,
             auto material = primitive.materialIndex
                                 ? static_cast<uint32_t>(*primitive.materialIndex)
                                 : default_material;
+            if (primitive.findAttribute("TEXCOORD_0") == primitive.attributes.end() &&
+                std::ranges::any_of(m_materials[material].textures,
+                                    [](uint16_t texture) { return texture != UINT16_MAX; }))
+            {
+                if (untextured_materials[material] == UINT32_MAX)
+                {
+                    Material untextured = m_materials[material];
+                    std::ranges::fill(untextured.textures, UINT16_MAX);
+                    untextured_materials[material] = static_cast<uint32_t>(m_materials.size());
+                    m_materials.push_back(untextured);
+                }
+                material = untextured_materials[material];
+            }
             mesh_map[i].push_back(static_cast<uint32_t>(m_meshes.size()));
             auto mesh = LoadMesh(geometry, asset, primitive, material, m_materials[material]);
             if (!mesh) return std::unexpected(mesh.error());

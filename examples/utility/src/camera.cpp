@@ -20,6 +20,9 @@ void Camera::Update(const Window& window, float delta_time)
     const auto size = window.GetSize();
     if (size.x && size.y) m_aspect = static_cast<float>(size.x) / static_cast<float>(size.y);
 
+    if (window.IsKeyPressed(m_keys.toggle_mode))
+        SetMode(m_mode == CameraMode::Orbit ? CameraMode::Fly : CameraMode::Orbit);
+
     switch (m_mode)
     {
         case CameraMode::Orbit:
@@ -109,15 +112,15 @@ void Camera::UpdateFly(const Window& window, float delta_time)
         m_move_speed = std::max(m_move_speed * std::pow(1.1f, scroll), 0.01f);
 
     glm::vec3 direction{0.f};
-    if (window.IsKeyDown(Key::W)) direction += GetForward();
-    if (window.IsKeyDown(Key::S)) direction -= GetForward();
-    if (window.IsKeyDown(Key::D)) direction += GetRight();
-    if (window.IsKeyDown(Key::A)) direction -= GetRight();
-    if (window.IsKeyDown(Key::E) || window.IsKeyDown(Key::Space)) direction += kWorldUp;
-    if (window.IsKeyDown(Key::Q) || window.IsKeyDown(Key::Control)) direction -= kWorldUp;
+    if (window.IsKeyDown(m_keys.forward)) direction += GetForward();
+    if (window.IsKeyDown(m_keys.back)) direction -= GetForward();
+    if (window.IsKeyDown(m_keys.right)) direction += GetRight();
+    if (window.IsKeyDown(m_keys.left)) direction -= GetRight();
+    if (window.IsKeyDown(m_keys.up)) direction += kWorldUp;
+    if (window.IsKeyDown(m_keys.down)) direction -= kWorldUp;
     if (glm::dot(direction, direction) == 0.f) return;
 
-    const float speed = m_move_speed * (window.IsKeyDown(Key::Shift) ? 4.f : 1.f);
+    const float speed = m_move_speed * (window.IsKeyDown(m_keys.sprint) ? 4.f : 1.f);
     m_position += glm::normalize(direction) * speed * delta_time;
 }
 

@@ -11,18 +11,18 @@
 struct Material
 {
     glm::vec4 base_color{1, 1, 1, 1};
-    
+
     glm::vec3 emissive{};
-    float metallic = 1; 
-    
+    float metallic = 1;
+
     float roughness = 1;
     float normal_scale = 1;
     float occlusion_strength = 1;
     float alpha_cutoff = .5f;
-    
+
     // Base color: 0, Metallic/Roughness: 1, Normal: 2, Occlusion: 3, Emissive: 4
     uint16_t textures[5]{UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX, UINT16_MAX};
-    
+
     // Bits 0-1: opaque=0, mask=1, blend=2; bit 2: double sided.
     uint16_t flags = 0;
 };
