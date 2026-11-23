@@ -88,6 +88,7 @@ void RM::Command::End() const { m_command_buffer->endCommandBuffer(); }
 
 void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
 {
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
     auto rpd = NS::TransferPtr(MTL4::RenderPassDescriptor::alloc()->init());
 
     for (uint32_t i = 0; i < info.color_attachments.size(); i++)
@@ -106,11 +107,12 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
         auto info_attach = *info.depth_attachment;
         auto* attachment = rpd->depthAttachment();
         attachment->setTexture(static_cast<MTL::Texture*>(info_attach.texture->GetNativeHandle()));
+        attachment->setClearDepth(info_attach.clear_depth);
         attachment->setLoadAction(static_cast<MTL::LoadAction>(info_attach.load_op));
         attachment->setStoreAction(static_cast<MTL::StoreAction>(info_attach.store_op));
     }
 
-    m_render_encoder = m_command_buffer->renderCommandEncoder(rpd.get());
+    m_render_encoder = NS::RetainPtr(m_command_buffer->renderCommandEncoder(rpd.get()));
     m_stencil_reference = 0;
     
     for (auto& barrier : m_pending_barriers)
@@ -129,7 +131,7 @@ void RM::Command::BeginRenderPass(const RenderPassCreateInfo& info)
 void RM::Command::EndRenderPass()
 {
     m_render_encoder->endEncoding();
-    m_render_encoder = nullptr;
+    m_render_encoder.reset();
 }
 
 void RM::Command::BeginComputePass()
@@ -142,7 +144,7 @@ void RM::Command::EndComputePass()
 {
     if (!m_compute_encoder) return;
     m_compute_encoder->endEncoding();
-    m_compute_encoder = nullptr;
+    m_compute_encoder.reset();
 }
 
 RM::Result<void> RM::Command::Draw(uint32_t vertex_count,
@@ -682,7 +684,8 @@ void* RM::Command::GetNativeAllocator() const { return m_command_allocator.get()
 
 void RM::Command::GetComputeEncoder()
 {
-    m_compute_encoder = m_command_buffer->computeCommandEncoder();
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+    m_compute_encoder = NS::RetainPtr(m_command_buffer->computeCommandEncoder());
     m_compute_encoder->setArgumentTable(m_arg_table.get());
 
     for (auto& barrier : m_pending_barriers)
@@ -698,7 +701,7 @@ void RM::Command::EndTransientComputeEncoder(bool transient)
 {
     if (!transient) return;
     m_compute_encoder->endEncoding();
-    m_compute_encoder = nullptr;
+    m_compute_encoder.reset();
 }
 
 RM::Result<void> RM::CommandRing::Initialize(Device* device, QueueType type)

@@ -34,7 +34,7 @@ namespace RM
 #ifdef RIMERA_METAL
         void DestroyTextures();
         NS::SharedPtr<CA::MetalLayer> m_swap_layer;
-        CA::MetalDrawable* m_drawable = nullptr;
+        NS::SharedPtr<CA::MetalDrawable> m_drawable;
         std::unordered_map<uint64_t, Texture*> m_textures;
 #elifdef RIMERA_D3D12
         [[nodiscard]] DisplayInfo QueryDisplayInfo() const;

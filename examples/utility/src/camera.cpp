@@ -83,6 +83,7 @@ glm::mat4 Camera::GetView() const
 
 glm::mat4 Camera::GetProjection() const
 {
+    if (m_reversed_z) return glm::perspectiveRH_ZO(m_fov_y, m_aspect, m_far_plane, m_near_plane);
     return glm::perspectiveRH_ZO(m_fov_y, m_aspect, m_near_plane, m_far_plane);
 }
 

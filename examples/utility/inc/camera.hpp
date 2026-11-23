@@ -38,6 +38,8 @@ public:
     [[nodiscard]] const CameraKeys& GetKeys() const { return m_keys; }
     [[nodiscard]] glm::vec3 GetPosition() const { return m_position; }
     [[nodiscard]] glm::vec3 GetTarget() const { return m_target; }
+    [[nodiscard]] float GetFovY() const { return m_fov_y; }
+    [[nodiscard]] float GetAspect() const { return m_aspect; }
     [[nodiscard]] glm::vec3 GetForward() const;
     [[nodiscard]] glm::vec3 GetRight() const;
     [[nodiscard]] glm::vec3 GetUp() const;
@@ -45,6 +47,7 @@ public:
     [[nodiscard]] glm::mat4 GetProjection() const;
     [[nodiscard]] glm::mat4 GetViewProjection() const { return GetProjection() * GetView(); }
     void SetAspect(float aspect) { m_aspect = aspect; }
+    void SetReversedZ(bool reversed_z) { m_reversed_z = reversed_z; }
 
 private:
     void UpdateOrbit(const Window& window);
@@ -62,6 +65,7 @@ private:
     float m_near_plane = 0.01f;
     float m_far_plane = 1000.f;
     float m_aspect = 16.f / 9.f;
+    bool m_reversed_z = false;
     float m_move_speed = 2.f;
     float m_look_sensitivity = 0.0025f;
 };

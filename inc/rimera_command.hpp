@@ -117,8 +117,8 @@ namespace RM
         NS::SharedPtr<MTL4::CommandAllocator> m_command_allocator;
         NS::SharedPtr<MTL4::ArgumentTable> m_vertex_arg_table;
 
-        MTL4::RenderCommandEncoder* m_render_encoder = nullptr;
-        MTL4::ComputeCommandEncoder* m_compute_encoder = nullptr;
+        NS::SharedPtr<MTL4::RenderCommandEncoder> m_render_encoder;
+        NS::SharedPtr<MTL4::ComputeCommandEncoder> m_compute_encoder;
 
         void GetComputeEncoder();
         void EndTransientComputeEncoder(bool transient);

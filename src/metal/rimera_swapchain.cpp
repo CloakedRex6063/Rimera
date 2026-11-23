@@ -29,13 +29,15 @@ void RM::Swapchain::DestroyTextures()
 {
     for (auto [id, texture] : m_textures) m_device->DestroyImmediate(texture);
     m_textures.clear();
-    m_drawable = nullptr;
+    m_drawable.reset();
 }
 
 RM::Result<void> RM::Swapchain::Acquire()
 {
-    m_drawable = m_swap_layer->nextDrawable();
-    if (!m_drawable) return std::unexpected("Failed to acquire a swapchain drawable");
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
+    auto* drawable = m_swap_layer->nextDrawable();
+    if (!drawable) return std::unexpected("Failed to acquire a swapchain drawable");
+    m_drawable = NS::RetainPtr(drawable);
 
     auto* texture = m_drawable->texture();
     const auto resource_id = texture->gpuResourceID()._impl;
@@ -47,17 +49,18 @@ RM::Result<void> RM::Swapchain::Acquire()
     }
 
     auto* native_queue = static_cast<MTL4::CommandQueue*>(m_queue->GetNativeHandle());
-    native_queue->wait(m_drawable);
+    native_queue->wait(m_drawable.get());
     return {};
 }
 
 RM::Result<void> RM::Swapchain::Present()
 {
     if (!m_drawable) return std::unexpected("No drawable is available");
+    auto pool = NS::TransferPtr(NS::AutoreleasePool::alloc()->init());
     auto* native_queue = static_cast<MTL4::CommandQueue*>(m_queue->GetNativeHandle());
-    native_queue->signalDrawable(m_drawable);
+    native_queue->signalDrawable(m_drawable.get());
     m_drawable->present();
-    m_drawable = nullptr;
+    m_drawable.reset();
     return {};
 }
 

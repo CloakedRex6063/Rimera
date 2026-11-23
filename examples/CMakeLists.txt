@@ -53,3 +53,4 @@ endfunction()
 
 add_subdirectory(utility)
 add_subdirectory(mesh_shader)
+add_subdirectory(grass)
